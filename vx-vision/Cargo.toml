@@ -1,0 +1,21 @@
+[package]
+name = "vx-vision"
+description = "High-level CV algorithms for VX — GPU-accelerated on Apple Silicon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+vx-core = { path = "../vx-core" }
+
+objc2.workspace            = true
+objc2-foundation.workspace = true
+objc2-metal.workspace      = true
+bytemuck.workspace         = true
+
+[dev-dependencies]
+image = "0.25"
+
+[[example]]
+name = "fast_demo"
+path = "../examples/fast_demo.rs"

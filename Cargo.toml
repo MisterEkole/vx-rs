@@ -1,0 +1,29 @@
+[workspace]
+members = [
+    "vx-core",
+    "vx-vision",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+objc2            = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSURL"] }
+objc2-metal      = { version = "0.3", features = [
+    "MTLDevice",
+    "MTLCommandQueue",
+    "MTLCommandBuffer",
+    "MTLCommandEncoder",
+    "MTLComputeCommandEncoder",
+    "MTLComputePipeline",
+    "MTLBuffer",
+    "MTLTexture",
+    "MTLLibrary",
+    "MTLResource",
+    "MTLTypes",
+]}
+bytemuck = { version = "1", features = ["derive"] }
