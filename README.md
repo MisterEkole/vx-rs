@@ -32,11 +32,11 @@ VX is a three-layer stack:
 └─────────────────────────────────────────────┘
 ```
 
+**Naming convention:** In this codebase, *shaders* refer to the MSL functions that run on the GPU (`shaders/*.metal`), and *kernels* refer to the Rust bindings that orchestrate them (`src/kernels/*.rs`).
+
 **Memory Layer** (`vx-core`) manages shared GPU/CPU buffers. `UnifiedBuffer<T>` wraps Metal buffers with type safety, and `GpuGuard<T>` prevents CPU access while a buffer is in-flight on the GPU.
 
 **Kernel Layer** (`vx-vision`) contains Rust bindings for each MSL shader. Each kernel is a struct holding a compiled pipeline — constructed once, dispatched cheaply per frame. The `Context` and `Texture` wrappers hide all Metal internals so users never import `objc2-metal`.
-
-**Naming convention:** In this codebase, *shaders* refer to the MSL functions that run on the GPU (`shaders/*.metal`), and *kernels* refer to the Rust bindings that orchestrate them (`src/kernels/*.rs`).
 
 **Application Layer** is your code. The API looks like this:
 
