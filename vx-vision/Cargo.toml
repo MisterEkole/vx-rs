@@ -19,3 +19,6 @@ image = "0.25"
 [[example]]
 name = "fast_demo"
 path = "../examples/fast_demo.rs"
+[[example]]
+name = "klt_benchmark"
+path = "../examples/klt_benchmark.rs"
