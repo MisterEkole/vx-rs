@@ -15,6 +15,10 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let shader_dir = Path::new("shaders");
 
+    // Re-run this build script whenever any file in shaders/ changes,
+    // including newly added .metal files.
+    println!("cargo:rerun-if-changed=shaders");
+
     let metal_files: Vec<PathBuf> = fs::read_dir(shader_dir)
         .expect("Cannot read shaders/ directory")
         .filter_map(|entry| {
@@ -61,7 +65,6 @@ fn main() {
         );
 
         air_files.push(air_path);
-        println!("cargo:rerun-if-changed={}", metal_path.display());
     }
 
     // Step 2: .air → vx.metallib

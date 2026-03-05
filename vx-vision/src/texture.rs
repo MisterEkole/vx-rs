@@ -158,6 +158,33 @@ impl Texture {
         Ok(Self { raw, width, height })
     }
 
+    /// Create an R32Float texture usable as both ShaderRead and ShaderWrite.
+    ///
+    /// Used as the intermediate scratch texture between the horizontal and
+    /// vertical passes of the Gaussian blur kernel. Both usage flags are set
+    /// so the texture can be written in one encoder and read in the next.
+    pub(crate) fn intermediate_r32float(
+        device: &ProtocolObject<dyn MTLDevice>,
+        width:  u32,
+        height: u32,
+    ) -> Result<Self, String> {
+        let desc = unsafe {
+            MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
+                MTLPixelFormat::R32Float,
+                width as usize,
+                height as usize,
+                false,
+            )
+        };
+        desc.setUsage(MTLTextureUsage::ShaderRead | MTLTextureUsage::ShaderWrite);
+
+        let raw = device
+            .newTextureWithDescriptor(&desc)
+            .ok_or("Failed to create intermediate R32Float texture")?;
+
+        Ok(Self { raw, width, height })
+    }
+
     /// Copy the texture contents back to CPU as raw R8 bytes.
     ///
     /// **Only call after the command buffer that wrote this texture has

@@ -92,3 +92,21 @@ pub struct StereoParams {
     pub cy: f32,
     pub baseline: f32,
 }
+
+/// Matches `NMSParams` in NMS.metal.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct NMSParams {
+    pub n_corners:    u32,
+    pub min_distance: f32,
+}
+
+/// Matches `GaussianParams` in GaussianBlur.metal.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct GaussianParams {
+    pub width:  u32,
+    pub height: u32,
+    pub sigma:  f32,
+    pub radius: u32,
+}
