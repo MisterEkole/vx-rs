@@ -22,3 +22,6 @@ path = "../examples/fast_demo.rs"
 [[example]]
 name = "klt_benchmark"
 path = "../examples/klt_benchmark.rs"
+[[example]]
+name = "orb_stereo_benchmark"
+path = "../examples/orb_stereo_benchmark.rs"
