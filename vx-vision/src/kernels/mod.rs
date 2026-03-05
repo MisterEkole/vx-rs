@@ -3,7 +3,5 @@
 pub mod fast;
 pub mod harris;
 pub mod klt;
-// pub mod orb;
-
-// pub mod stereo;
-// pub mod undistort;
+pub mod orb;
+pub mod stereomatch;
