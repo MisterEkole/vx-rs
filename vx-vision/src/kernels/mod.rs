@@ -5,3 +5,4 @@ pub mod harris;
 pub mod klt;
 pub mod orb;
 pub mod stereomatch;
+pub mod undistort;

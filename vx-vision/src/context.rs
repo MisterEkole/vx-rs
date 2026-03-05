@@ -60,6 +60,28 @@ impl Context {
         Texture::from_gray8(&self.device, pixels, width, height)
     }
 
+    /// Create a single-channel R32Float texture from f32 remap data.
+    ///
+    /// Use this to upload `map_x` / `map_y` arrays produced by camera
+    /// calibration (e.g. OpenCV's `initUndistortRectifyMap`).
+    /// `data` must contain exactly `width * height` values.
+    pub fn texture_r32float(
+        &self,
+        data:   &[f32],
+        width:  u32,
+        height: u32,
+    ) -> Result<Texture, String> {
+        Texture::from_r32float(&self.device, data, width, height)
+    }
+
+    /// Create a write-capable R8Unorm output texture for the undistort kernel.
+    ///
+    /// After the kernel completes, call [`Texture::read_gray8`] to copy
+    /// the result back to the CPU.
+    pub fn texture_output_gray8(&self, width: u32, height: u32) -> Result<Texture, String> {
+        Texture::output_gray8(&self.device, width, height)
+    }
+
     // -- Crate-internal accessors (not part of the public API) --
 
     pub(crate) fn device(&self) -> &ProtocolObject<dyn MTLDevice> {
