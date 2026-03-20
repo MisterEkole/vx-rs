@@ -1,10 +1,4 @@
-// vx-vision/src/context.rs
-//
-// The user-facing GPU context. Initializes Metal device, command queue,
-// and loads the embedded shader library in one call.
-//
-// This is the main entry point — users should never need to import
-// objc2 or objc2-metal types.
+//! Application entry point for GPU initialization.
 
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
@@ -12,11 +6,10 @@ use objc2_metal::{MTLCommandQueue, MTLDevice, MTLLibrary};
 
 use crate::texture::Texture;
 
-/// GPU context holding a Metal device, command queue, and compiled shader library.
-///
-/// Create once at startup and reuse for the lifetime of your application.
+/// Metal device, command queue, and compiled shader library.
 ///
 /// # Example
+///
 /// ```no_run
 /// let ctx = vx_vision::Context::new().expect("No Metal GPU available");
 /// ```
@@ -27,10 +20,7 @@ pub struct Context {
 }
 
 impl Context {
-    /// Initialize the default Metal device and load the VX shader library.
-    ///
-    /// Fails if no Metal-capable GPU is found or if the embedded shaders
-    /// cannot be loaded.
+    /// Initializes the default Metal device and loads the embedded shader library.
     pub fn new() -> Result<Self, String> {
         let device = vx_core::default_device()
             .ok_or_else(|| "No Metal device found (Apple Silicon or discrete GPU required)".to_string())?;
@@ -40,11 +30,10 @@ impl Context {
         Ok(Self { device, queue, library })
     }
 
-    /// Create a single-channel 8-bit grayscale texture.
-    ///
-    /// `pixels` must contain exactly `width * height` bytes in row-major order.
+    /// Creates an R8Unorm texture from grayscale pixel data.
     ///
     /// # Example
+    ///
     /// ```no_run
     /// # let ctx = vx_vision::Context::new().unwrap();
     /// let img = image::open("photo.png").unwrap().to_luma8();
@@ -60,11 +49,7 @@ impl Context {
         Texture::from_gray8(&self.device, pixels, width, height)
     }
 
-    /// Create a single-channel R32Float texture from f32 remap data.
-    ///
-    /// Use this to upload `map_x` / `map_y` arrays produced by camera
-    /// calibration (e.g. OpenCV's `initUndistortRectifyMap`).
-    /// `data` must contain exactly `width * height` values.
+    /// Creates an R32Float texture from `f32` data.
     pub fn texture_r32float(
         &self,
         data:   &[f32],
@@ -74,15 +59,30 @@ impl Context {
         Texture::from_r32float(&self.device, data, width, height)
     }
 
-    /// Create a write-capable R8Unorm output texture for the undistort kernel.
-    ///
-    /// After the kernel completes, call [`Texture::read_gray8`] to copy
-    /// the result back to the CPU.
+    /// Creates an empty R8Unorm output texture with `ShaderWrite` usage.
     pub fn texture_output_gray8(&self, width: u32, height: u32) -> Result<Texture, String> {
         Texture::output_gray8(&self.device, width, height)
     }
 
-    // -- Crate-internal accessors (not part of the public API) --
+    /// Creates an RGBA8Unorm texture from 4-channel pixel data.
+    pub fn texture_rgba8(
+        &self,
+        pixels: &[u8],
+        width:  u32,
+        height: u32,
+    ) -> Result<Texture, String> {
+        Texture::from_rgba8(&self.device, pixels, width, height)
+    }
+
+    /// Creates an empty RGBA8Unorm output texture.
+    pub fn texture_output_rgba8(&self, width: u32, height: u32) -> Result<Texture, String> {
+        Texture::output_rgba8(&self.device, width, height)
+    }
+
+    /// Creates an empty R32Float output texture.
+    pub fn texture_output_r32float(&self, width: u32, height: u32) -> Result<Texture, String> {
+        Texture::output_r32float(&self.device, width, height)
+    }
 
     pub(crate) fn device(&self) -> &ProtocolObject<dyn MTLDevice> {
         &self.device

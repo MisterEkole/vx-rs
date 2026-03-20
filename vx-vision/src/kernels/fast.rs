@@ -1,11 +1,4 @@
-// vx-vision/src/kernels/fast.rs
-//
-// Rust binding for the FAST-9 corner detector (FastDetect.metal).
-//
-// Usage:
-//   let ctx = Context::new()?;
-//   let fast = FastDetector::new(&ctx)?;
-//   let result = fast.detect(&ctx, &texture, &FastDetectConfig::default())?;
+//! FAST-9 corner detector.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -23,16 +16,10 @@ use crate::context::Context;
 use crate::texture::Texture;
 use crate::types::{CornerPoint, FASTParams};
 
-// ---------------------------------------------------------------------------
-// Configuration
-// ---------------------------------------------------------------------------
-
-/// User-facing config for the FAST corner detector.
+/// Configuration for the FAST corner detector.
 #[derive(Clone, Debug)]
 pub struct FastDetectConfig {
-    /// Intensity difference threshold for the circle test (0–255 range).
-    /// Lower = more corners; higher = fewer, stronger corners.
-    /// Typical: 10–40.
+    /// Intensity difference threshold (0--255). Lower values yield more corners.
     pub threshold: i32,
 
     /// Maximum number of corners the output buffer can hold.
@@ -48,11 +35,7 @@ impl Default for FastDetectConfig {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Detector
-// ---------------------------------------------------------------------------
-
-/// Compiled FAST-9 pipeline.  Create once, reuse across frames.
+/// Compiled FAST-9 pipeline. Reusable across frames.
 pub struct FastDetector {
     pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
@@ -60,17 +43,12 @@ pub struct FastDetector {
 /// Result of a single detection pass.
 #[derive(Debug)]
 pub struct FastDetectResult {
-    /// Detected corners.  Order is non-deterministic (GPU thread scheduling).
-    /// Run NMS or sort by response on the CPU if you need ordering.
+    /// Detected corners in non-deterministic order (GPU scheduling).
     pub corners: Vec<CornerPoint>,
 }
 
 impl FastDetector {
-    // --------------------------------------------------------------------
-    // Construction
-    // --------------------------------------------------------------------
-
-    /// Build the compute pipeline from the context's shader library.
+    /// Creates the compute pipeline from the context's shader library.
     pub fn new(ctx: &Context) -> Result<Self, String> {
         let name = objc2_foundation::ns_string!("fast_detect");
 
@@ -83,14 +61,10 @@ impl FastDetector {
         Ok(Self { pipeline })
     }
 
-    // --------------------------------------------------------------------
-    // Synchronous dispatch
-    // --------------------------------------------------------------------
-
-    /// Run the detector on a grayscale texture.
+    /// Runs the detector on a grayscale texture.
     ///
-    /// Synchronous: encodes, commits, waits for GPU completion,
-    /// then reads back results.  For pipelined usage, use [`Self::encode`].
+    /// Synchronous: encodes, commits, waits, then reads back results.
+    /// For pipelined usage, see [`Self::encode`].
     pub fn detect(
         &self,
         ctx: &Context,
@@ -100,15 +74,12 @@ impl FastDetector {
         let width = texture.width();
         let height = texture.height();
 
-        // --- Allocate shared-memory buffers via vx-core (zero-copy on UMA) ---
         let corner_buf: UnifiedBuffer<CornerPoint> =
             UnifiedBuffer::new(ctx.device(), config.max_corners as usize)?;
         let mut count_buf: UnifiedBuffer<u32> = UnifiedBuffer::new(ctx.device(), 1)?;
 
-        // Zero the atomic counter
         count_buf.write(&[0u32]);
 
-        // --- Pack params ---
         let params = FASTParams {
             threshold: config.threshold,
             max_corners: config.max_corners,
@@ -116,11 +87,9 @@ impl FastDetector {
             height,
         };
 
-        // --- Acquire GPU guards (prevent mutable CPU access during flight) ---
         let _corner_guard = corner_buf.gpu_guard();
         let _count_guard = count_buf.gpu_guard();
 
-        // --- Encode & dispatch ---
         let cmd_buf = ctx.queue().commandBuffer()
             .ok_or("Failed to create command buffer")?;
 
@@ -137,26 +106,18 @@ impl FastDetector {
         cmd_buf.commit();
         cmd_buf.waitUntilCompleted();
 
-        // --- Guards drop here, releasing CPU access ---
         drop(_corner_guard);
         drop(_count_guard);
 
-        // --- Readback  ---
         let n_detected = count_buf.as_slice()[0];
-        let n = (n_detected as usize).min(config.max_corners as usize); //.min prevents reading garbage beyond the buffer
+        let n = (n_detected as usize).min(config.max_corners as usize);
 
-        let corners = corner_buf.as_slice()[..n].to_vec(); // slices first n valid corner into an owned Vec
+        let corners = corner_buf.as_slice()[..n].to_vec();
 
         Ok(FastDetectResult { corners })
     }
 
-    // --------------------------------------------------------------------
-    // Encode-only (for pipelining)
-    // --------------------------------------------------------------------
-
-    /// Encode the FAST detection into an existing compute encoder
-    /// without committing.  Returns `EncodedBuffers` holding the
-    /// retained Metal buffers.
+    /// Encodes FAST detection into an existing compute encoder without committing.
     ///
     /// Chain: FAST -> Harris -> NMS in a single command buffer.
     /// Read results with [`Self::read_results`] after commit + wait.
@@ -196,17 +157,14 @@ impl FastDetector {
         })
     }
 
-    /// Read corners from buffers returned by [`Self::encode`].
-    /// **Only call after the command buffer has completed.**
+    /// Reads corners from buffers returned by [`Self::encode`].
+    ///
+    /// Only valid after the command buffer has completed.
     pub fn read_results(buffers: &EncodedBuffers) -> Vec<CornerPoint> {
         let n_detected = buffers.count.as_slice()[0];
         let n = (n_detected as usize).min(buffers.max_corners as usize);
         buffers.corners.as_slice()[..n].to_vec()
     }
-
-    // --------------------------------------------------------------------
-    // Internal
-    // --------------------------------------------------------------------
 
     fn encode_into(
         pipeline: &ProtocolObject<dyn MTLComputePipelineState>,
@@ -218,8 +176,7 @@ impl FastDetector {
         width: u32,
         height: u32,
     ) {
-        // SAFETY: setBytes requires a valid NonNull pointer to param data.
-        // GPU encoder operations interact with device state.
+        // SAFETY: setBytes requires a valid pointer; encoder ops interact with device state.
         unsafe {
             encoder.setComputePipelineState(pipeline);
             encoder.setTexture_atIndex(Some(texture.raw()), 0);
@@ -250,8 +207,7 @@ impl FastDetector {
     }
 }
 
-/// Buffers returned by [`FastDetector::encode`].
-/// Holds the `UnifiedBuffer`s alive until readback.
+/// Buffers returned by [`FastDetector::encode`]. Keeps allocations alive until readback.
 pub struct EncodedBuffers {
     pub corners: UnifiedBuffer<CornerPoint>,
     pub count: UnifiedBuffer<u32>,

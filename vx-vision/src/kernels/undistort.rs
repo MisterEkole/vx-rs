@@ -1,25 +1,4 @@
-// vx-vision/src/kernels/undistort.rs
-//
-// Rust binding for the lens undistortion kernel (undistort.metal).
-//
-// The shader remaps every output pixel by sampling the input image at the
-// (x, y) coordinate stored in two precomputed float maps (map_x, map_y).
-// This is the standard OpenCV-style remap: given camera intrinsics and
-// distortion coefficients you compute the maps once on the CPU, upload them
-// as R32Float textures, then call this kernel every frame.
-//
-// Usage:
-//   let ctx = Context::new()?;
-//   let undistorter = Undistorter::new(&ctx)?;
-//
-//   // Build maps once (e.g. from OpenCV initUndistortRectifyMap output):
-//   let map_x = ctx.texture_r32float(&map_x_data, width, height)?;
-//   let map_y = ctx.texture_r32float(&map_y_data, width, height)?;
-//   let output = ctx.texture_output_gray8(width, height)?;
-//
-//   // Per frame:
-//   undistorter.apply(&ctx, &input, &map_x, &map_y, &output)?;
-//   let pixels: Vec<u8> = output.read_gray8();
+//! Lens undistortion via precomputed per-pixel coordinate maps (OpenCV-style remap).
 
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
@@ -32,24 +11,13 @@ use objc2_metal::{
 use crate::context::Context;
 use crate::texture::Texture;
 
-// ---------------------------------------------------------------------------
-// Undistorter
-// ---------------------------------------------------------------------------
-
-/// Compiled lens undistortion pipeline. Create once, reuse across frames.
-///
-/// The remap maps (`map_x`, `map_y`) are typically computed once from camera
-/// calibration data and reused for every frame.
+/// Compiled lens undistortion pipeline.
 pub struct Undistorter {
     pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl Undistorter {
-    // --------------------------------------------------------------------
-    // Construction
-    // --------------------------------------------------------------------
-
-    /// Build the compute pipeline from the context's shader library.
+    /// Builds the compute pipeline from the context's shader library.
     pub fn new(ctx: &Context) -> Result<Self, String> {
         let name = objc2_foundation::ns_string!("undistort");
 
@@ -62,24 +30,10 @@ impl Undistorter {
         Ok(Self { pipeline })
     }
 
-    // --------------------------------------------------------------------
-    // Synchronous dispatch
-    // --------------------------------------------------------------------
-
-    /// Remap `input` into `output` using per-pixel float coordinate maps.
+    /// Remaps `input` into `output` using per-pixel float coordinate maps.
     ///
-    /// - `input`  — distorted source image (R8Unorm, ShaderRead)
-    /// - `map_x`  — per-pixel source x coordinate (R32Float, ShaderRead);
-    ///              create with [`Context::texture_r32float`]
-    /// - `map_y`  — per-pixel source y coordinate (R32Float, ShaderRead);
-    ///              create with [`Context::texture_r32float`]
-    /// - `output` — undistorted destination (R8Unorm, ShaderWrite);
-    ///              create with [`Context::texture_output_gray8`], read back
-    ///              with [`Texture::read_gray8`]
-    ///
-    /// `map_x`, `map_y`, and `output` must all be the same dimensions.
-    ///
-    /// Synchronous: encodes, commits, waits for GPU completion.
+    /// `map_x` and `map_y` are R32Float textures with the same dimensions as
+    /// `output`. Synchronous: waits for GPU completion before returning.
     pub fn apply(
         &self,
         ctx: &Context,
@@ -105,12 +59,7 @@ impl Undistorter {
         Ok(())
     }
 
-    // --------------------------------------------------------------------
-    // Encode-only (for pipelining)
-    // --------------------------------------------------------------------
-
-    /// Encode the undistortion into an existing compute encoder without
-    /// committing. Useful when chaining with other kernels.
+    /// Encodes the undistortion into an existing compute encoder without committing.
     pub fn encode(
         &self,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
@@ -124,10 +73,6 @@ impl Undistorter {
         Self::encode_into(&self.pipeline, encoder, input, map_x, map_y, output, width, height);
     }
 
-    // --------------------------------------------------------------------
-    // Internal
-    // --------------------------------------------------------------------
-
     fn encode_into(
         pipeline: &ProtocolObject<dyn MTLComputePipelineState>,
         encoder:  &ProtocolObject<dyn MTLComputeCommandEncoder>,
@@ -138,16 +83,7 @@ impl Undistorter {
         width:    u32,
         height:   u32,
     ) {
-        // SAFETY: GPU encoder operations interact with device state.
-        //
-        // Binding matches undistort.metal:
-        //   texture(0) = input   (sample access — distorted source)
-        //   texture(1) = map_x   (read access  — source x coords, R32Float)
-        //   texture(2) = map_y   (read access  — source y coords, R32Float)
-        //   texture(3) = output  (write access — undistorted destination)
-        //
-        // No params buffer needed; everything is encoded in the maps.
-        // 2D dispatch: one thread per output pixel.
+        // Bindings: 0=input, 1=map_x, 2=map_y, 3=output. No params buffer.
         unsafe {
             encoder.setComputePipelineState(pipeline);
             encoder.setTexture_atIndex(Some(input.raw()),  0);

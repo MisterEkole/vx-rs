@@ -1,15 +1,4 @@
-// vx-vision/src/kernels/orb.rs
-//
-// Rust binding for the ORB descriptor extractor (ORBDescriptor.metal).
-//
-// Given a grayscale image texture and a set of keypoints, computes:
-//   - A 256-bit rotated BRIEF descriptor (packed as 8 × u32)
-//   - The intensity-centroid orientation angle for each keypoint
-//
-// Usage:
-//   let ctx = Context::new()?;
-//   let orb = OrbDescriptor::new(&ctx)?;
-//   let result = orb.compute(&ctx, &texture, &keypoints, &pattern, &OrbConfig::default())?;
+//! ORB descriptor extractor (rotated BRIEF + intensity-centroid orientation).
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -28,14 +17,10 @@ use crate::context::Context;
 use crate::texture::Texture;
 use crate::types::{CornerPoint, ORBOutput, ORBParams};
 
-// ---------------------------------------------------------------------------
-// Configuration
-// ---------------------------------------------------------------------------
-
-/// User-facing config for the ORB descriptor extractor.
+/// Configuration for the ORB descriptor extractor.
 #[derive(Clone, Debug)]
 pub struct OrbConfig {
-    /// Circular patch radius (default 15 for standard 31×31 patch).
+    /// Circular patch radius (default 15 for a 31x31 patch).
     pub patch_radius: u32,
 }
 
@@ -45,16 +30,12 @@ impl Default for OrbConfig {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Descriptor extractor
-// ---------------------------------------------------------------------------
-
-/// Compiled ORB descriptor pipeline. Create once, reuse across frames.
+/// Compiled ORB descriptor pipeline. Reusable across frames.
 pub struct OrbDescriptor {
     pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
-/// Result of a single ORB descriptor extraction pass.
+/// Result of a single ORB extraction pass.
 #[derive(Debug)]
 pub struct OrbResult {
     /// Per-keypoint 256-bit descriptors and orientation angles.
@@ -62,11 +43,7 @@ pub struct OrbResult {
 }
 
 impl OrbDescriptor {
-    // --------------------------------------------------------------------
-    // Construction
-    // --------------------------------------------------------------------
-
-    /// Build the compute pipeline from the context's shader library.
+    /// Creates the compute pipeline from the context's shader library.
     pub fn new(ctx: &Context) -> Result<Self, String> {
         let name = objc2_foundation::ns_string!("orb_describe");
 
@@ -79,17 +56,12 @@ impl OrbDescriptor {
         Ok(Self { pipeline })
     }
 
-    // --------------------------------------------------------------------
-    // Synchronous dispatch
-    // --------------------------------------------------------------------
-
-    /// Compute ORB descriptors for a set of keypoints.
+    /// Computes ORB descriptors for a set of keypoints.
     ///
-    /// `pattern` is the standard ORB test pattern: 256 test pairs, each with
-    /// (dx1, dy1, dx2, dy2), flattened to 1024 i32 values. Must be exactly 1024.
+    /// `pattern` is 256 test pairs as `(dx1, dy1, dx2, dy2)`, flattened to 1024 `i32` values.
     ///
-    /// Synchronous: encodes, commits, waits for GPU completion, then reads back.
-    /// For pipelined usage, use [`Self::encode`].
+    /// Synchronous: encodes, commits, waits, then reads back.
+    /// For pipelined usage, see [`Self::encode`].
     pub fn compute(
         &self,
         ctx: &Context,
@@ -147,15 +119,9 @@ impl OrbDescriptor {
         Ok(OrbResult { descriptors })
     }
 
-    // --------------------------------------------------------------------
-    // Encode-only (for pipelining)
-    // --------------------------------------------------------------------
-
-    /// Encode ORB descriptor extraction into an existing compute encoder
-    /// without committing. Returns `OrbEncodedBuffers` holding all buffers
-    /// alive until readback.
+    /// Encodes ORB extraction into an existing compute encoder without committing.
     ///
-    /// Typical chain: FAST → Harris → ORB → commit.
+    /// Typical chain: FAST -> Harris -> ORB -> commit.
     pub fn encode(
         &self,
         ctx: &Context,
@@ -201,16 +167,13 @@ impl OrbDescriptor {
         })
     }
 
-    /// Read ORB results from buffers returned by [`Self::encode`].
-    /// **Only call after the command buffer has completed.**
+    /// Reads ORB results from buffers returned by [`Self::encode`].
+    ///
+    /// Only valid after the command buffer has completed.
     pub fn read_results(buffers: &OrbEncodedBuffers) -> OrbResult {
         let descriptors = buffers.descriptors.as_slice()[..buffers.n_keypoints].to_vec();
         OrbResult { descriptors }
     }
-
-    // --------------------------------------------------------------------
-    // Internal
-    // --------------------------------------------------------------------
 
     fn encode_into(
         pipeline: &ProtocolObject<dyn MTLComputePipelineState>,
@@ -222,16 +185,7 @@ impl OrbDescriptor {
         params: &ORBParams,
         n_keypoints: usize,
     ) {
-        // SAFETY: GPU encoder operations interact with device state.
-        //
-        // Binding matches ORBDescriptor.metal (orb_describe):
-        //   texture(0) = image        (read)
-        //   buffer(0)  = keypoints    (CornerPoint[], read)
-        //   buffer(1)  = output       (ORBOutput[], write)
-        //   buffer(2)  = params       (ORBParams, constant)
-        //   buffer(3)  = pattern      (int[1024], constant)
-        //
-        // Dispatch is 1D: one thread per keypoint.
+        // SAFETY: setBytes requires a valid pointer; encoder ops interact with device state.
         unsafe {
             encoder.setComputePipelineState(pipeline);
             encoder.setTexture_atIndex(Some(texture.raw()), 0);
@@ -253,8 +207,7 @@ impl OrbDescriptor {
     }
 }
 
-/// Buffers returned by [`OrbDescriptor::encode`].
-/// Holds all buffers alive until readback.
+/// Buffers returned by [`OrbDescriptor::encode`]. Keeps allocations alive until readback.
 pub struct OrbEncodedBuffers {
     pub keypoints:   UnifiedBuffer<CornerPoint>,
     pub descriptors: UnifiedBuffer<ORBOutput>,

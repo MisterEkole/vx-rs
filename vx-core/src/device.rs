@@ -1,6 +1,4 @@
-// vx-core/src/device.rs
-//
-// Device and Queue initialization helpers.
+//! Metal device initialization and shader library loading.
 
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
@@ -8,27 +6,25 @@ use objc2_metal::{
     MTLCommandQueue, MTLCreateSystemDefaultDevice, MTLDevice, MTLLibrary,
 };
 
-// Required for MTLCreateSystemDefaultDevice
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {}
 
-/// Get the system default Metal device.
-/// Returns `None` on machines without Metal support.
+/// Returns the system default Metal device, or `None` if Metal is unavailable.
 pub fn default_device() -> Option<Retained<ProtocolObject<dyn MTLDevice>>> {
     MTLCreateSystemDefaultDevice()
 }
 
-/// Create a new command queue from a device.
+/// Creates a command queue on `device`.
 pub fn new_queue(
     device: &ProtocolObject<dyn MTLDevice>,
 ) -> Result<Retained<ProtocolObject<dyn MTLCommandQueue>>, String> {
     device.newCommandQueue().ok_or_else(|| "Failed to create command queue".into())
 }
 
-/// Load a Metal library from raw metallib bytes.
+/// Loads a Metal library from precompiled metallib bytes.
 ///
-/// Writes to a temp file and loads via `newLibraryWithURL:error:`.
-/// The bytes are typically embedded at compile time via `include_bytes!`.
+/// Writes `bytes` to a per-thread temp file, loads via `newLibraryWithURL:error:`,
+/// then removes the temp file. Typically used with `include_bytes!`.
 pub fn load_library_from_bytes(
     device: &ProtocolObject<dyn MTLDevice>,
     bytes: &[u8],
@@ -38,7 +34,9 @@ pub fn load_library_from_bytes(
     }
 
     let tmp_dir = std::env::temp_dir();
-    let metallib_path = tmp_dir.join("vx_shaders.metallib");
+    let unique_id = std::process::id();
+    let thread_id = format!("{:?}", std::thread::current().id());
+    let metallib_path = tmp_dir.join(format!("vx_shaders_{}_{}.metallib", unique_id, thread_id.replace(['(', ')'], "")));
     std::fs::write(&metallib_path, bytes)
         .map_err(|e| format!("Failed to write metallib to temp: {e}"))?;
 
@@ -53,4 +51,37 @@ pub fn load_library_from_bytes(
     let _ = std::fs::remove_file(&metallib_path);
 
     Ok(library)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_device_exists() {
+        let device = default_device();
+        assert!(device.is_some(), "No Metal device found — Apple Silicon or compatible GPU required");
+    }
+
+    #[test]
+    fn create_queue() {
+        let device = default_device().expect("No Metal device");
+        let queue = new_queue(&device);
+        assert!(queue.is_ok(), "Failed to create command queue: {:?}", queue.err());
+    }
+
+    #[test]
+    fn load_empty_metallib_fails() {
+        let device = default_device().expect("No Metal device");
+        let result = load_library_from_bytes(&device, &[]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("empty"));
+    }
+
+    #[test]
+    fn load_invalid_metallib_fails() {
+        let device = default_device().expect("No Metal device");
+        let result = load_library_from_bytes(&device, b"not a metallib");
+        assert!(result.is_err());
+    }
 }

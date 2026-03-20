@@ -1,15 +1,4 @@
-// vx-vision/src/kernels/harris.rs
-//
-// Rust binding for the Harris corner response scorer (HarrisResponse.metal).
-//
-// Harris refines corners found by FAST: it takes a list of candidate
-// corners and replaces each corner's `response` field with the Harris
-// corner measure R = det(M) - k·trace(M)².
-//
-// Usage:
-//   let ctx = Context::new()?;
-//   let harris = HarrisScorer::new(&ctx)?;
-//   let scored = harris.compute(&ctx, &texture, &corners, &HarrisConfig::default())?;
+//! Harris corner response scorer.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -28,19 +17,13 @@ use crate::context::Context;
 use crate::texture::Texture;
 use crate::types::{CornerPoint, HarrisParams};
 
-// ---------------------------------------------------------------------------
-// Configuration
-// ---------------------------------------------------------------------------
-
-/// User-facing config for the Harris corner response scorer.
+/// Configuration for the Harris corner response scorer.
 #[derive(Clone, Debug)]
 pub struct HarrisConfig {
-    /// Harris sensitivity parameter.
-    /// Lower = more sensitive to edges; typical value: 0.04–0.06.
+    /// Sensitivity parameter. Typical: 0.04--0.06.
     pub k: f32,
 
-    /// Half-size of the integration window for the structure tensor.
-    /// A value of 3 means a 7×7 patch (2·3+1 = 7).
+    /// Half-size of the structure tensor integration window (e.g. 3 = 7x7 patch).
     pub patch_radius: i32,
 }
 
@@ -53,22 +36,14 @@ impl Default for HarrisConfig {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Scorer
-// ---------------------------------------------------------------------------
-
-/// Compiled Harris response pipeline. Create once, reuse across frames.
+/// Compiled Harris response pipeline. Reusable across frames.
 pub struct HarrisScorer {
     pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl HarrisScorer {
-    // --------------------------------------------------------------------
-    // Construction
-    // --------------------------------------------------------------------
+    /// Creates the compute pipeline from the context's shader library.
 
-    /// Build the compute pipeline from the context's shader library.
-    
     pub fn new(ctx: &Context) -> Result<Self, String> {
         let name = objc2_foundation::ns_string!("harris_response");
 
@@ -81,18 +56,13 @@ impl HarrisScorer {
         Ok(Self { pipeline })
     }
 
-    // --------------------------------------------------------------------
-    // Synchronous dispatch
-    // --------------------------------------------------------------------
-
-    /// Score a set of candidate corners with the Harris response measure.
+    /// Scores candidate corners with the Harris response measure R = det(M) - k*trace(M)^2.
     ///
-    /// Takes the original image texture (for gradient computation) and a
-    /// slice of corners (typically from FAST). Returns the same corners
-    /// with their `response` field overwritten by the Harris score.
+    /// Takes the source texture and a slice of corners (typically from FAST).
+    /// Returns the same corners with `response` overwritten by the Harris score.
     ///
-    /// Synchronous: encodes, commits, waits for GPU completion, then
-    /// reads back results. For pipelined usage, use [`Self::encode`].
+    /// Synchronous: encodes, commits, waits, then reads back.
+    /// For pipelined usage, see [`Self::encode`].
     pub fn compute(
         &self,
         ctx: &Context,
@@ -106,26 +76,19 @@ impl HarrisScorer {
 
         let n_corners = corners.len();
 
-        // --- Upload corners to shared-memory buffer  ---
-        // The shader reads .position and writes .response in-place.
+        // The shader reads `.position` and writes `.response` in-place.
         let mut corner_buf: UnifiedBuffer<CornerPoint> =
             UnifiedBuffer::new(ctx.device(), n_corners)?;
         corner_buf.write(corners);
 
-        // --- Pack params ---
-        // Matches HarrisParams in HarrisResponse.metal:
-        //   buffer(0) = corners (read/write)
-        //   buffer(1) = params
         let params = HarrisParams {
             n_corners: n_corners as u32,
             patch_radius: config.patch_radius,
             k: config.k,
         };
 
-        // --- GPU guard ---
         let _corner_guard = corner_buf.gpu_guard();
 
-        // --- Encode & dispatch ---
         let cmd_buf = ctx.queue().commandBuffer()
             .ok_or("Failed to create command buffer")?;
 
@@ -138,22 +101,14 @@ impl HarrisScorer {
         cmd_buf.commit();
         cmd_buf.waitUntilCompleted();
 
-        // --- Release guard ---
         drop(_corner_guard);
 
-        // --- Readback (same buffer, response fields now updated) ---
         Ok(corner_buf.as_slice()[..n_corners].to_vec())
     }
 
-    // --------------------------------------------------------------------
-    // Encode-only (for pipelining)
-    // --------------------------------------------------------------------
-
-    /// Encode Harris scoring into an existing compute encoder without
-    /// committing. Returns `HarrisEncodedBuffers` holding the corner
-    /// buffer alive until readback.
+    /// Encodes Harris scoring into an existing compute encoder without committing.
     ///
-    /// Typical chain: FAST encode → Harris encode → NMS encode → commit.
+    /// Typical chain: FAST encode -> Harris encode -> NMS encode -> commit.
     pub fn encode(
         &self,
         ctx: &Context,
@@ -186,15 +141,12 @@ impl HarrisScorer {
         })
     }
 
-    /// Read scored corners from buffers returned by [`Self::encode`].
-    /// **Only call after the command buffer has completed.**
+    /// Reads scored corners from buffers returned by [`Self::encode`].
+    ///
+    /// Only valid after the command buffer has completed.
     pub fn read_results(buffers: &HarrisEncodedBuffers) -> Vec<CornerPoint> {
         buffers.corners.as_slice()[..buffers.n_corners].to_vec()
     }
-
-    // --------------------------------------------------------------------
-    // Internal
-    // --------------------------------------------------------------------
 
     fn encode_into(
         pipeline: &ProtocolObject<dyn MTLComputePipelineState>,
@@ -204,13 +156,7 @@ impl HarrisScorer {
         params: &HarrisParams,
         n_corners: usize,
     ) {
-        // SAFETY: setBytes requires a valid NonNull pointer to param data.
-        // GPU encoder operations interact with device state.
-        //
-        // Buffer binding matches HarrisResponse.metal:
-        //   texture(0) = image
-        //   buffer(0)  = corners (read position, write response)
-        //   buffer(1)  = params
+        // SAFETY: setBytes requires a valid pointer; encoder ops interact with device state.
         //
         // Dispatch is 1D: one thread per corner (not per pixel like FAST).
         unsafe {
@@ -220,10 +166,9 @@ impl HarrisScorer {
             encoder.setBytes_length_atIndex(
                 NonNull::new_unchecked(params as *const HarrisParams as *mut c_void),
                 mem::size_of::<HarrisParams>(),
-                1,  // buffer(1) — not buffer(2) like FAST!
+                1,
             );
 
-            // 1D dispatch: one thread per corner
             let tew = pipeline.threadExecutionWidth();
             let grid = MTLSize {
                 width: n_corners,
@@ -241,8 +186,7 @@ impl HarrisScorer {
     }
 }
 
-/// Buffers returned by [`HarrisScorer::encode`].
-/// Holds the corner buffer alive until readback.
+/// Buffers returned by [`HarrisScorer::encode`]. Keeps the corner buffer alive until readback.
 pub struct HarrisEncodedBuffers {
     pub corners: UnifiedBuffer<CornerPoint>,
     pub n_corners: usize,

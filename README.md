@@ -20,7 +20,7 @@ VX is a three-layer stack:
 │  Context::new() → detect() → corners        │
 ├─────────────────────────────────────────────┤
 │  Kernel Layer               (vx-vision)     │
-│  FAST · Harris · ORB · KLT · Stereo        │
+│  28+ GPU kernels across 6 categories        │
 ├─────────────────────────────────────────────┤
 │  Memory Layer               (vx-core)       │
 │  UnifiedBuffer<T> · GpuGuard<T> · Device    │
@@ -56,20 +56,36 @@ let scored = harris.compute(&ctx, &texture, &corners.corners, &HarrisConfig::def
 
 No `unsafe` in user code. No Metal imports. No GPU boilerplate.
 
+## Available Kernels
+
+| Category | Kernels |
+|---|---|
+| **Feature Detection** | FAST-9, Harris, ORB descriptors, DoG/SIFT-like pipeline |
+| **Image Processing** | Gaussian blur, bilateral filter, Sobel, Canny edge, morphology (erode/dilate), threshold (binary/Otsu), histogram (compute/equalize), color conversion |
+| **Geometry** | Resize (bilinear), image pyramid, warp (affine/perspective), homography, lens undistortion |
+| **Analysis** | Template matching (NCC), Hough lines, integral image, distance transform (JFA), connected components |
+| **Motion & Stereo** | KLT optical flow, dense flow, stereo matching, brute-force descriptor matching |
+| **Utilities** | Non-maximum suppression, texture pool, pipeline batching |
+
 ## Building
 
 Requires macOS with Xcode command line tools (`xcode-select --install`).
 
 ```
 cargo build
+cargo test
 cargo run --example fast_demo -- path/to/image.png
 ```
 
 The build script automatically compiles all `.metal` shaders into a single metallib and embeds it in the binary.
 
-## Status
+See [docs/getting-started.md](docs/getting-started.md) for a detailed setup guide.
 
-**Active development.** FAST-9 detection and Harris response scoring are implemented and verified on Apple Silicon. The remaining kernels (ORB descriptors, KLT tracking, stereo matching, lens undistortion) have Metal shaders written and are awaiting Rust bindings.
+## Documentation
+
+- [Getting Started](docs/getting-started.md) — setup, first project, core concepts
+- [API Guide](docs/api-guide.md) — kernel-by-kernel reference with usage patterns
+- [Performance](docs/performance.md) — TexturePool, Pipeline batching, optimization tips
 
 ## License
 

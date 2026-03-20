@@ -1,19 +1,4 @@
-// vx-vision/src/kernels/klt.rs
-//
-// Rust binding for the KLT (Kanade-Lucas-Tomasi) optical flow tracker
-// (KLTTracker.metal).
-//
-// KLT tracks a set of points from a previous frame to a current frame
-// using iterative Lucas-Kanade at multiple pyramid levels.  It requires
-// pre-built image pyramids for both frames (4 levels each).
-//
-// Usage:
-//   let ctx = Context::new()?;
-//   let tracker = KltTracker::new(&ctx)?;
-//   let result = tracker.track(
-//       &ctx, &prev_pyramid, &curr_pyramid,
-//       &points, &KltConfig::default(),
-//   )?;
+//! KLT (Kanade-Lucas-Tomasi) optical flow tracker.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -32,15 +17,11 @@ use crate::context::Context;
 use crate::texture::Texture;
 use crate::types::KLTParams;
 
-// ---------------------------------------------------------------------------
-// Configuration
-// ---------------------------------------------------------------------------
-
-/// User-facing config for the KLT optical flow tracker.
+/// Configuration for the KLT tracker.
 #[derive(Clone, Debug)]
 pub struct KltConfig {
 
-    pub max_iterations: u32, 
+    pub max_iterations: u32,
     pub epsilon: f32,
 
     pub win_radius: i32,
@@ -61,26 +42,14 @@ impl Default for KltConfig {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Pyramid
-// ---------------------------------------------------------------------------
-
-/// A 4-level image pyramid for one frame.
+/// Four-level image pyramid for one frame.
 ///
-/// Level 0 is the full-resolution image; each subsequent level is
-/// half the dimensions of the previous.  Users must build pyramids
-/// before calling the tracker.
-///
-/// The shader binds exactly 4 texture slots per frame, so we fix
-/// the count at 4.  If `max_level < 3`, the unused levels are still
-/// bound but never sampled by the shader.
+/// Level 0 is full resolution; each subsequent level is half the dimensions.
+/// The shader binds exactly 4 texture slots per frame, so unused levels
+/// are still bound but never sampled.
 pub struct ImagePyramid {
     pub levels: [Texture; 4],
 }
-
-// ---------------------------------------------------------------------------
-// Tracker
-// ---------------------------------------------------------------------------
 
 pub struct KltTracker {
     pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
@@ -89,20 +58,14 @@ pub struct KltTracker {
 /// Result of a single tracking pass.
 #[derive(Debug)]
 pub struct KltResult {
-    /// Tracked point positions in the current frame.
+    /// Tracked positions in the current frame.
     pub points: Vec<[f32; 2]>,
 
-    /// Per-point tracking status.
-    /// `true` = successfully tracked, `false` = lost (out of bounds or
-    /// structure tensor below min_eigenvalue).
+    /// Per-point status: `true` = tracked, `false` = lost.
     pub status: Vec<bool>,
 }
 
 impl KltTracker {
-    // --------------------------------------------------------------------
-    // Construction-- compute pipeline
-    // --------------------------------------------------------------------
-
     pub fn new(ctx: &Context) -> Result<Self, String> {
         let name = objc2_foundation::ns_string!("klt_track_forward");
 
@@ -115,14 +78,7 @@ impl KltTracker {
         Ok(Self { pipeline })
     }
 
-    // --------------------------------------------------------------------
-    // Synchronous dispatch
-    // --------------------------------------------------------------------
-
-    /// Track points from the previous frame to the current frame.
-    ///
-    /// `prev_pyramid` and `curr_pyramid` are 4-level image pyramids.
-    /// `prev_points` are the 2D positions to track (typically from FAST).
+    /// Tracks points from `prev_pyramid` to `curr_pyramid` using iterative Lucas-Kanade.
     ///
     /// Returns tracked positions and per-point success/failure status.
     pub fn track(
@@ -142,10 +98,6 @@ impl KltTracker {
 
         let n_points = prev_points.len();
 
-        // --- Allocate buffers ---
-        // buffer(0): prev_pts  — input positions (read by shader)
-        // buffer(1): curr_pts  — output positions (written by shader)
-        // buffer(2): status    — per-point success flag (written by shader)
         let mut prev_buf: UnifiedBuffer<[f32; 2]> =
             UnifiedBuffer::new(ctx.device(), n_points)?;
         prev_buf.write(prev_points);
@@ -156,7 +108,6 @@ impl KltTracker {
         let status_buf: UnifiedBuffer<u8> =
             UnifiedBuffer::new(ctx.device(), n_points)?;
 
-        // --- Pack params ---
         let params = KLTParams {
             n_points: n_points as u32,
             max_iterations: config.max_iterations,
@@ -166,12 +117,10 @@ impl KltTracker {
             min_eigenvalue: config.min_eigenvalue,
         };
 
-        // --- GPU guards on all three data buffers ---
         let _prev_guard = prev_buf.gpu_guard();
         let _curr_guard = curr_buf.gpu_guard();
         let _status_guard = status_buf.gpu_guard();
 
-        // --- Encode & dispatch ---
         let cmd_buf = ctx.queue().commandBuffer()
             .ok_or("Failed to create command buffer")?;
 
@@ -194,7 +143,6 @@ impl KltTracker {
         drop(_curr_guard);
         drop(_status_guard);
 
-        // --- Readback ---
         let points = curr_buf.as_slice()[..n_points].to_vec();
         let status = status_buf.as_slice()[..n_points]
             .iter()
@@ -204,13 +152,7 @@ impl KltTracker {
         Ok(KltResult { points, status })
     }
 
-    // --------------------------------------------------------------------
-    // Encode-only (for pipelining)
-    // --------------------------------------------------------------------
-
-    /// Encode KLT tracking into an existing compute encoder without
-    /// committing.  Returns `KltEncodedBuffers` holding all three
-    /// buffers alive until readback.
+    /// Encodes KLT tracking into an existing compute encoder without committing.
     pub fn encode(
         &self,
         ctx: &Context,
@@ -260,8 +202,9 @@ impl KltTracker {
         })
     }
 
-    /// Read tracked points from buffers returned by [`Self::encode`].
-    /// **Only call after the command buffer has completed.**
+    /// Reads tracked points from buffers returned by [`Self::encode`].
+    ///
+    /// Only valid after the command buffer has completed.
     pub fn read_results(buffers: &KltEncodedBuffers) -> KltResult {
         let points = buffers.curr_pts.as_slice()[..buffers.n_points].to_vec();
         let status = buffers.status.as_slice()[..buffers.n_points]
@@ -270,10 +213,6 @@ impl KltTracker {
             .collect();
         KltResult { points, status }
     }
-
-    // --------------------------------------------------------------------
-    // Internal
-    // --------------------------------------------------------------------
 
     fn encode_into(
         pipeline: &ProtocolObject<dyn MTLComputePipelineState>,
@@ -286,24 +225,13 @@ impl KltTracker {
         params: &KLTParams,
         n_points: usize,
     ) {
-        // SAFETY: GPU encoder operations interact with device state.
+        // SAFETY: setBytes requires a valid pointer; encoder ops interact with device state.
         //
-        // Texture binding matches KLTTracker.metal:
-        //   texture(0..3)  = prev pyramid levels 0–3
-        //   texture(4..7)  = curr pyramid levels 0–3
-        //
-        // Buffer binding:
-        //   buffer(0) = prev_pts   (float2, read)
-        //   buffer(1) = curr_pts   (float2, write)
-        //   buffer(2) = status     (uint8_t, write)
-        //   buffer(3) = params
-        //
+        // Textures 0..3 = prev pyramid, 4..7 = curr pyramid.
         // Dispatch is 1D: one thread per point.
         unsafe {
             encoder.setComputePipelineState(pipeline);
 
-            // Bind 8 pyramid textures
-            
             for (i, level) in prev_pyramid.levels.iter().enumerate() {
                 encoder.setTexture_atIndex(Some(level.raw()), i);
             }
@@ -311,19 +239,16 @@ impl KltTracker {
                 encoder.setTexture_atIndex(Some(level.raw()), 4 + i);
             }
 
-            // Bind data buffers
             encoder.setBuffer_offset_atIndex(Some(prev_buf.metal_buffer()), 0, 0);
             encoder.setBuffer_offset_atIndex(Some(curr_buf.metal_buffer()), 0, 1);
             encoder.setBuffer_offset_atIndex(Some(status_buf.metal_buffer()), 0, 2);
 
-            // Bind params at buffer(3)
             encoder.setBytes_length_atIndex(
                 NonNull::new_unchecked(params as *const KLTParams as *mut c_void),
                 mem::size_of::<KLTParams>(),
                 3,
             );
 
-            // 1D dispatch: one thread per point
             let tew = pipeline.threadExecutionWidth();
             let grid = MTLSize {
                 width: n_points,
@@ -341,8 +266,7 @@ impl KltTracker {
     }
 }
 
-/// Buffers returned by [`KltTracker::encode`].
-/// Holds all three buffers alive until readback.
+/// Buffers returned by [`KltTracker::encode`]. Keeps allocations alive until readback.
 pub struct KltEncodedBuffers {
     pub prev_pts: UnifiedBuffer<[f32; 2]>,
     pub curr_pts: UnifiedBuffer<[f32; 2]>,

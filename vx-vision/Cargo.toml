@@ -25,3 +25,21 @@ path = "../examples/klt_benchmark.rs"
 [[example]]
 name = "orb_stereo_benchmark"
 path = "../examples/orb_stereo_benchmark.rs"
+[[example]]
+name = "edge_detection_demo"
+path = "../examples/edge_detection_demo.rs"
+[[example]]
+name = "warp_resize_demo"
+path = "../examples/warp_resize_demo.rs"
+[[example]]
+name = "threshold_demo"
+path = "../examples/threshold_demo.rs"
+[[example]]
+name = "advanced_cv_demo"
+path = "../examples/advanced_cv_demo.rs"
+[[example]]
+name = "feature_matching_demo"
+path = "../examples/feature_matching_demo.rs"
+[[example]]
+name = "pipeline_pool_demo"
+path = "../examples/pipeline_pool_demo.rs"

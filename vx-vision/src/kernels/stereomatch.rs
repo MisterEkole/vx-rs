@@ -1,23 +1,4 @@
-// vx-vision/src/kernels/stereomatch.rs
-//
-// Rust binding for the stereo feature matcher (StereoMatch.metal).
-//
-// Two-pass GPU pipeline:
-//   Pass 1 (stereo_hamming)  – builds an n_left × n_right Hamming distance
-//                              matrix, applying epipolar and disparity
-//                              constraints. Invalid pairs are marked 0xFFFF.
-//   Pass 2 (stereo_extract)  – scans each row for the best match, applies a
-//                              Hamming threshold, triangulates depth, and
-//                              atomically appends valid StereoMatchResult entries.
-//
-// Usage:
-//   let ctx = Context::new()?;
-//   let matcher = StereoMatcher::new(&ctx)?;
-//   let result = matcher.run(
-//       &ctx, &left_kpts, &right_kpts,
-//       &left_descs, &right_descs,
-//       &StereoConfig::default(),
-//   )?;
+//! Stereo feature matching with epipolar and disparity constraints.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -35,42 +16,37 @@ use vx_core::UnifiedBuffer;
 use crate::context::Context;
 use crate::types::{CornerPoint, ORBOutput, StereoMatchResult, StereoParams};
 
-// ---------------------------------------------------------------------------
-// Configuration
-// ---------------------------------------------------------------------------
-
-/// User-facing config for the stereo feature matcher.
+/// Configuration for the stereo feature matcher.
 #[derive(Clone, Debug)]
 pub struct StereoConfig {
-    /// Maximum y-difference (pixels) for the epipolar constraint.
-    /// Use 2.0 for well-rectified stereo pairs.
+    /// Epipolar y-tolerance in pixels.
     pub max_epipolar: f32,
 
-    /// Minimum valid disparity (pixels).
+    /// Minimum disparity (pixels).
     pub min_disparity: f32,
 
-    /// Maximum valid disparity (pixels).
+    /// Maximum disparity (pixels).
     pub max_disparity: f32,
 
-    /// Maximum Hamming distance accepted as a valid match (0–256).
+    /// Maximum accepted Hamming distance (0--256).
     pub max_hamming: u32,
 
-    /// Lowe's ratio test threshold (0.0–1.0). Lower = stricter.
+    /// Lowe's ratio test threshold. Lower is stricter.
     pub ratio_thresh: f32,
 
-    /// Focal length x (pixels).
+    /// Focal length x in pixels.
     pub fx: f32,
 
-    /// Focal length y (pixels).
+    /// Focal length y in pixels.
     pub fy: f32,
 
-    /// Principal point x (pixels).
+    /// Principal point x in pixels.
     pub cx: f32,
 
-    /// Principal point y (pixels).
+    /// Principal point y in pixels.
     pub cy: f32,
 
-    /// Stereo baseline (metres).
+    /// Stereo baseline in metres.
     pub baseline: f32,
 }
 
@@ -91,29 +67,21 @@ impl Default for StereoConfig {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Matcher
-// ---------------------------------------------------------------------------
-
-/// Compiled stereo matching pipeline. Create once, reuse across frames.
+/// Stereo matching compute pipelines. Create once, reuse across frames.
 pub struct StereoMatcher {
     hamming_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     extract_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
-/// Result of a stereo matching pass.
+/// Stereo matching result.
 #[derive(Debug)]
 pub struct StereoResult {
-    /// Valid stereo matches with disparity and triangulated 3D position.
+    /// Matches with disparity and triangulated 3D position.
     pub matches: Vec<StereoMatchResult>,
 }
 
 impl StereoMatcher {
-    // --------------------------------------------------------------------
-    // Construction
-    // --------------------------------------------------------------------
-
-    /// Build both compute pipelines from the context's shader library.
+    /// Builds both compute pipelines from the context's shader library.
     pub fn new(ctx: &Context) -> Result<Self, String> {
         let hamming_name = objc2_foundation::ns_string!("stereo_hamming");
         let extract_name = objc2_foundation::ns_string!("stereo_extract");
@@ -133,18 +101,10 @@ impl StereoMatcher {
         Ok(Self { hamming_pipeline, extract_pipeline })
     }
 
-    // --------------------------------------------------------------------
-    // Synchronous dispatch
-    // --------------------------------------------------------------------
-
-    /// Match ORB features between left and right rectified images.
+    /// Matches ORB features between rectified left/right images.
     ///
-    /// `left_descs` / `right_descs` come from [`OrbDescriptor::compute`].
-    /// Their 256-bit descriptor words are packed into GPU buffers internally;
-    /// the `angle` field is not used by the matcher.
-    ///
-    /// Synchronous: encodes both passes in one command buffer, commits,
-    /// waits for GPU completion, then reads back results.
+    /// Descriptors from [`OrbDescriptor::compute`] are packed into GPU
+    /// buffers internally. Encodes both passes in one command buffer.
     pub fn run(
         &self,
         ctx: &Context,
@@ -164,8 +124,7 @@ impl StereoMatcher {
             return Ok(StereoResult { matches: Vec::new() });
         }
 
-        // --- Pack raw descriptor words (8 × u32 per keypoint, no angle) ---
-        // The shader indexes as desc[idx * 8 + word], so we strip the angle field.
+        // Pack raw descriptor words (8 x u32 per keypoint, angle stripped)
         let left_words:  Vec<u32> = left_descs.iter().flat_map(|d| d.desc).collect();
         let right_words: Vec<u32> = right_descs.iter().flat_map(|d| d.desc).collect();
 
@@ -177,7 +136,7 @@ impl StereoMatcher {
             UnifiedBuffer::new(ctx.device(), right_words.len())?;
         right_desc_buf.write(&right_words);
 
-        // --- Keypoint buffers ---
+        // Keypoint buffers
         let mut left_kpt_buf: UnifiedBuffer<CornerPoint> =
             UnifiedBuffer::new(ctx.device(), n_left)?;
         left_kpt_buf.write(left_kpts);
@@ -186,11 +145,11 @@ impl StereoMatcher {
             UnifiedBuffer::new(ctx.device(), n_right)?;
         right_kpt_buf.write(right_kpts);
 
-        // --- Distance matrix (n_left × n_right × u16) ---
+        // Distance matrix (n_left x n_right, u16)
         let dist_matrix: UnifiedBuffer<u16> =
             UnifiedBuffer::new(ctx.device(), n_left * n_right)?;
 
-        // --- Match output (worst-case: every left keypoint matches) ---
+        // Match output buffer
         let matches_buf: UnifiedBuffer<StereoMatchResult> =
             UnifiedBuffer::new(ctx.device(), n_left)?;
 
@@ -212,7 +171,7 @@ impl StereoMatcher {
             baseline:      config.baseline,
         };
 
-        // --- GPU guards ---
+        // GPU lifetime guards
         let _ld = left_desc_buf.gpu_guard();
         let _rd = right_desc_buf.gpu_guard();
         let _lk = left_kpt_buf.gpu_guard();
@@ -221,11 +180,11 @@ impl StereoMatcher {
         let _mt = matches_buf.gpu_guard();
         let _ct = count_buf.gpu_guard();
 
-        // --- Encode both passes into a single command buffer ---
+        // Encode both passes into a single command buffer
         let cmd_buf = ctx.queue().commandBuffer()
             .ok_or("Failed to create command buffer")?;
 
-        // Pass 1: build Hamming distance matrix
+        // Pass 1: Hamming distance matrix
         {
             let encoder = cmd_buf.computeCommandEncoder()
                 .ok_or("Failed to create hamming encoder")?;
@@ -240,7 +199,7 @@ impl StereoMatcher {
             encoder.endEncoding();
         }
 
-        // Pass 2: extract best match per left keypoint, triangulate
+        // Pass 2: extract best match per left keypoint and triangulate
         {
             let encoder = cmd_buf.computeCommandEncoder()
                 .ok_or("Failed to create extract encoder")?;
@@ -259,16 +218,12 @@ impl StereoMatcher {
 
         drop((_ld, _rd, _lk, _rk, _dm, _mt, _ct));
 
-        // --- Readback ---
+        // Readback
         let n_matches = (count_buf.as_slice()[0] as usize).min(n_left);
         let matches = matches_buf.as_slice()[..n_matches].to_vec();
 
         Ok(StereoResult { matches })
     }
-
-    // --------------------------------------------------------------------
-    // Internal: Pass 1 — Hamming distance matrix
-    // --------------------------------------------------------------------
 
     fn encode_hamming(
         pipeline:    &ProtocolObject<dyn MTLComputePipelineState>,
@@ -282,17 +237,6 @@ impl StereoMatcher {
         n_left:      usize,
         n_right:     usize,
     ) {
-        // SAFETY: GPU encoder operations interact with device state.
-        //
-        // Binding matches StereoMatch.metal (stereo_hamming):
-        //   buffer(0) = left_desc   (uint32_t*, n_left  × 8, read)
-        //   buffer(1) = right_desc  (uint32_t*, n_right × 8, read)
-        //   buffer(2) = left_kpts   (CornerPoint*, read)
-        //   buffer(3) = right_kpts  (CornerPoint*, read)
-        //   buffer(4) = dist_matrix (ushort*, n_left × n_right, write)
-        //   buffer(5) = params      (StereoParams, constant)
-        //
-        // 2D dispatch: gid.x = left_idx, gid.y = right_idx.
         unsafe {
             encoder.setComputePipelineState(pipeline);
             encoder.setBuffer_offset_atIndex(Some(left_desc.metal_buffer()),   0, 0);
@@ -317,10 +261,6 @@ impl StereoMatcher {
         }
     }
 
-    // --------------------------------------------------------------------
-    // Internal: Pass 2 — Extract best matches
-    // --------------------------------------------------------------------
-
     fn encode_extract(
         pipeline:    &ProtocolObject<dyn MTLComputePipelineState>,
         encoder:     &ProtocolObject<dyn MTLComputeCommandEncoder>,
@@ -332,17 +272,6 @@ impl StereoMatcher {
         params:      &StereoParams,
         n_left:      usize,
     ) {
-        // SAFETY: GPU encoder operations interact with device state.
-        //
-        // Binding matches StereoMatch.metal (stereo_extract):
-        //   buffer(0) = dist_matrix  (ushort*, read)
-        //   buffer(1) = left_kpts    (CornerPoint*, read)
-        //   buffer(2) = right_kpts   (CornerPoint*, read)
-        //   buffer(3) = matches      (StereoMatchResult*, write)
-        //   buffer(4) = match_count  (atomic_uint, read/write)
-        //   buffer(5) = params       (StereoParams, constant)
-        //
-        // 1D dispatch: one thread per left keypoint.
         unsafe {
             encoder.setComputePipelineState(pipeline);
             encoder.setBuffer_offset_atIndex(Some(dist_matrix.metal_buffer()),  0, 0);

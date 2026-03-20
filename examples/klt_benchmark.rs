@@ -22,6 +22,7 @@ use vx_vision::Texture;
 use vx_vision::kernels::fast::{FastDetectConfig, FastDetector};
 use vx_vision::kernels::harris::{HarrisConfig, HarrisScorer};
 use vx_vision::kernels::klt::{ImagePyramid, KltConfig, KltTracker};
+use vx_vision::kernels::pyramid::PyramidBuilder;
 
 /// Minimum Harris response to keep a corner for tracking.
 const HARRIS_THRESHOLD: f32 = 1e-5;
@@ -60,8 +61,9 @@ fn main() {
     let fast = FastDetector::new(&ctx).expect("Failed to create FAST pipeline");
     let harris = HarrisScorer::new(&ctx).expect("Failed to create Harris pipeline");
     let tracker = KltTracker::new(&ctx).expect("Failed to create KLT pipeline");
+    let pyr_builder = PyramidBuilder::new(&ctx).expect("Failed to create pyramid pipeline");
     let setup_ms = t0.elapsed().as_secs_f64() * 1000.0;
-    println!("GPU setup:        {:.2} ms (context + 3 pipelines)\n", setup_ms);
+    println!("GPU setup:        {:.2} ms (context + 4 pipelines)\n", setup_ms);
 
     // ── Configs ──
     let fast_config = FastDetectConfig {
@@ -86,13 +88,12 @@ fn main() {
     // ── Load first frame ──
     let (first_pixels, w, h) = load_gray8(&frames[0]);
 
-    let t_pyr = Instant::now();
-    let mut prev_pyramid = build_pyramid(&ctx, &first_pixels, w, h);
-    let first_pyr_ms = t_pyr.elapsed().as_secs_f64() * 1000.0;
-
-    // FAST + Harris on full-res texture for initial corners
     let first_texture = ctx.texture_gray8(&first_pixels, w, h)
         .expect("Failed to create texture");
+
+    let t_pyr = Instant::now();
+    let mut prev_pyramid = build_pyramid_gpu(&ctx, &pyr_builder, &first_texture);
+    let first_pyr_ms = t_pyr.elapsed().as_secs_f64() * 1000.0;
     let mut tracked_positions = detect_and_score(
         &ctx, &fast, &harris, &first_texture,
         &fast_config, &harris_config,
@@ -118,9 +119,12 @@ fn main() {
         let load_ms = t_load.elapsed().as_secs_f64() * 1000.0;
         total_load_ms += load_ms;
 
-        // Build pyramid for current frame
+        // Upload frame + build GPU pyramid
+        let curr_tex = ctx.texture_gray8(&pixels, fw, fh)
+            .expect("Failed to create texture");
+
         let t_pyr = Instant::now();
-        let curr_pyramid = build_pyramid(&ctx, &pixels, fw, fh);
+        let curr_pyramid = build_pyramid_gpu(&ctx, &pyr_builder, &curr_tex);
         let pyr_ms = t_pyr.elapsed().as_secs_f64() * 1000.0;
         total_pyramid_ms += pyr_ms;
 
@@ -129,10 +133,8 @@ fn main() {
         let min_points = (initial_count as f32 * REDETECT_RATIO) as usize;
         if tracked_positions.len() < min_points {
             let t_det = Instant::now();
-            let redetect_tex = ctx.texture_gray8(&pixels, fw, fh)
-                .expect("Failed to create texture");
             tracked_positions = detect_and_score(
-                &ctx, &fast, &harris, &redetect_tex,
+                &ctx, &fast, &harris, &curr_tex,
                 &fast_config, &harris_config,
             );
             detect_ms = t_det.elapsed().as_secs_f64() * 1000.0;
@@ -239,52 +241,29 @@ fn load_gray8(path: &PathBuf) -> (Vec<u8>, u32, u32) {
     (img.into_raw(), w, h)
 }
 
-/// Build a 4-level image pyramid from grayscale pixels.
+/// Build a 4-level image pyramid on the GPU using Gaussian downsample.
 ///
-/// Level 0 = original, each subsequent level is half-size via 2x2 box filter.
-fn build_pyramid(ctx: &Context, pixels: &[u8], width: u32, height: u32) -> ImagePyramid {
-    let level0 = ctx.texture_gray8(pixels, width, height)
-        .expect("Failed to create pyramid level 0");
+/// Level 0 = original texture, levels 1–3 are half-size each.
+/// Uses the PyramidBuilder kernel instead of CPU box-filter downsampling.
+fn build_pyramid_gpu(ctx: &Context, pyr: &PyramidBuilder, level0: &Texture) -> ImagePyramid {
+    let down_levels = pyr.build(ctx, level0, 4)
+        .expect("GPU pyramid build failed");
 
-    let (down1, w1, h1) = downsample_2x(pixels, width, height);
-    let level1 = ctx.texture_gray8(&down1, w1, h1)
-        .expect("Failed to create pyramid level 1");
+    // PyramidBuilder::build returns levels 1..N; we need [level0, l1, l2, l3].
+    // We must re-upload level0 since ImagePyramid owns its textures.
+    let l0_pixels = level0.read_gray8();
+    let l0 = ctx.texture_gray8(&l0_pixels, level0.width(), level0.height())
+        .expect("Failed to re-create level 0");
 
-    let (down2, w2, h2) = downsample_2x(&down1, w1, h1);
-    let level2 = ctx.texture_gray8(&down2, w2, h2)
-        .expect("Failed to create pyramid level 2");
-
-    let (down3, w3, h3) = downsample_2x(&down2, w2, h2);
-    let level3 = ctx.texture_gray8(&down3, w3, h3)
-        .expect("Failed to create pyramid level 3");
-
+    let mut levels = down_levels.into_iter();
     ImagePyramid {
-        levels: [level0, level1, level2, level3],
+        levels: [
+            l0,
+            levels.next().expect("Missing pyramid level 1"),
+            levels.next().expect("Missing pyramid level 2"),
+            levels.next().expect("Missing pyramid level 3"),
+        ],
     }
-}
-
-/// 2x box-filter downsample: each output pixel = average of 2x2 block.
-fn downsample_2x(src: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
-    let dw = w / 2;
-    let dh = h / 2;
-    let mut dst = vec![0u8; (dw * dh) as usize];
-
-    for dy in 0..dh {
-        for dx in 0..dw {
-            let sx = (dx * 2) as usize;
-            let sy = (dy * 2) as usize;
-            let sw = w as usize;
-
-            let sum = src[sy * sw + sx] as u32
-                + src[sy * sw + sx + 1] as u32
-                + src[(sy + 1) * sw + sx] as u32
-                + src[(sy + 1) * sw + sx + 1] as u32;
-
-            dst[(dy * dw + dx) as usize] = (sum / 4) as u8;
-        }
-    }
-
-    (dst, dw, dh)
 }
 
 /// Run FAST -> Harris -> filter -> sort -> take top N.

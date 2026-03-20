@@ -1,20 +1,4 @@
-// vx-vision/src/kernels/nms.rs
-//
-// Rust binding for the Non-Maximum Suppression kernel (NMS.metal).
-//
-// NMS filters a set of corners so that no two surviving corners are
-// within `min_distance` pixels of each other.  For each corner, if any
-// other corner with a strictly higher response falls within that radius,
-// the current corner is suppressed.  Compatible with both FAST and Harris
-// corner outputs (both produce `CornerPoint` arrays).
-//
-// Typical pipeline:
-//   FAST detect → Harris score → NMS → tracking / ORB describe
-//
-// Usage:
-//   let ctx = Context::new()?;
-//   let nms = NmsSuppressor::new(&ctx)?;
-//   let survivors = nms.run(&ctx, &corners, &NmsConfig::default())?;
+//! Non-maximum suppression for corner points.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -32,16 +16,10 @@ use vx_core::UnifiedBuffer;
 use crate::context::Context;
 use crate::types::{CornerPoint, NMSParams};
 
-// ---------------------------------------------------------------------------
-// Configuration
-// ---------------------------------------------------------------------------
-
-/// User-facing config for the NMS suppressor.
+/// Configuration for the NMS suppressor.
 #[derive(Clone, Debug)]
 pub struct NmsConfig {
-    /// Minimum pixel distance between any two surviving corners.
-    /// A corner is suppressed if a stronger corner exists within this radius.
-    /// Typical values: 5–15 pixels.
+    /// Minimum pixel distance between surviving corners. Typical: 5--15.
     pub min_distance: f32,
 }
 
@@ -51,21 +29,13 @@ impl Default for NmsConfig {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Suppressor
-// ---------------------------------------------------------------------------
-
-/// Compiled NMS pipeline. Create once, reuse across frames.
+/// Compiled NMS pipeline. Reusable across frames.
 pub struct NmsSuppressor {
     pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl NmsSuppressor {
-    // --------------------------------------------------------------------
-    // Construction
-    // --------------------------------------------------------------------
-
-    /// Build the compute pipeline from the context's shader library.
+    /// Creates the compute pipeline from the context's shader library.
     pub fn new(ctx: &Context) -> Result<Self, String> {
         let name = objc2_foundation::ns_string!("nms_suppress");
 
@@ -78,17 +48,12 @@ impl NmsSuppressor {
         Ok(Self { pipeline })
     }
 
-    // --------------------------------------------------------------------
-    // Synchronous dispatch
-    // --------------------------------------------------------------------
-
-    /// Suppress non-maximal corners from `corners`.
+    /// Suppresses non-maximal corners, keeping only local response maxima.
     ///
-    /// Returns surviving corners in non-deterministic order (GPU scheduling).
-    /// Sort by `response` afterwards if you need a ranked list.
+    /// Returns survivors in non-deterministic order (GPU scheduling).
     ///
-    /// Synchronous: encodes, commits, waits for GPU completion, reads back.
-    /// For pipelined usage, use [`Self::encode`].
+    /// Synchronous: encodes, commits, waits, then reads back.
+    /// For pipelined usage, see [`Self::encode`].
     pub fn run(
         &self,
         ctx: &Context,
@@ -139,12 +104,7 @@ impl NmsSuppressor {
         Ok(output_buf.as_slice()[..n_out].to_vec())
     }
 
-    // --------------------------------------------------------------------
-    // Encode-only (for pipelining)
-    // --------------------------------------------------------------------
-
-    /// Encode NMS into an existing compute encoder without committing.
-    /// Returns `NmsEncodedBuffers` holding all buffers alive until readback.
+    /// Encodes NMS into an existing compute encoder without committing.
     pub fn encode(
         &self,
         ctx:     &Context,
@@ -178,16 +138,13 @@ impl NmsSuppressor {
         Ok(NmsEncodedBuffers { input: input_buf, output: output_buf, count: count_buf, n_input: n })
     }
 
-    /// Read surviving corners from buffers returned by [`Self::encode`].
-    /// **Only call after the command buffer has completed.**
+    /// Reads surviving corners from buffers returned by [`Self::encode`].
+    ///
+    /// Only valid after the command buffer has completed.
     pub fn read_results(buffers: &NmsEncodedBuffers) -> Vec<CornerPoint> {
         let n_out = (buffers.count.as_slice()[0] as usize).min(buffers.n_input);
         buffers.output.as_slice()[..n_out].to_vec()
     }
-
-    // --------------------------------------------------------------------
-    // Internal
-    // --------------------------------------------------------------------
 
     fn encode_into(
         pipeline:   &ProtocolObject<dyn MTLComputePipelineState>,
@@ -198,13 +155,7 @@ impl NmsSuppressor {
         params:     &NMSParams,
         n:          usize,
     ) {
-        // SAFETY: GPU encoder operations interact with device state.
-        //
-        // Binding matches NMS.metal (nms_suppress):
-        //   buffer(0) = input     (CornerPoint[], read)
-        //   buffer(1) = output    (CornerPoint[], write — atomic append)
-        //   buffer(2) = out_count (atomic_uint)
-        //   buffer(3) = params    (NMSParams, constant)
+        // SAFETY: setBytes requires a valid pointer; encoder ops interact with device state.
         //
         // Dispatch is 1D: one thread per input corner.
         unsafe {
