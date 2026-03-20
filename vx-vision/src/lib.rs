@@ -25,5 +25,5 @@ static METALLIB_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/vx.meta
 pub(crate) fn load_library(
     device: &ProtocolObject<dyn MTLDevice>,
 ) -> Result<Retained<ProtocolObject<dyn MTLLibrary>>, String> {
-    vx_core::load_library_from_bytes(device, METALLIB_BYTES)
+    vx_gpu::load_library_from_bytes(device, METALLIB_BYTES)
 }

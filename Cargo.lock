@@ -964,7 +964,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "vx-core"
+name = "vx-gpu"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
@@ -982,7 +982,7 @@ dependencies = [
  "objc2",
  "objc2-foundation",
  "objc2-metal",
- "vx-core",
+ "vx-gpu",
 ]
 
 [[package]]

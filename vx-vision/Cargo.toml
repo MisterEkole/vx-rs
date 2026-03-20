@@ -1,12 +1,24 @@
 [package]
 name = "vx-vision"
-description = "High-level CV algorithms for VX — GPU-accelerated on Apple Silicon"
+description = "GPU-accelerated computer vision for Apple Silicon via Metal compute shaders"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme = "../README.md"
+keywords = ["gpu", "metal", "computer-vision", "apple-silicon", "image-processing"]
+categories = ["computer-vision", "graphics", "os::macos-apis"]
+include = [
+    "src/**/*.rs",
+    "shaders/**/*.metal",
+    "tests/**/*.rs",
+    "build.rs",
+    "Cargo.toml",
+]
 
 [dependencies]
-vx-core = { path = "../vx-core" }
+vx-gpu = { path = "../vx-core", version = "0.1.0" }
 
 objc2.workspace            = true
 objc2-foundation.workspace = true

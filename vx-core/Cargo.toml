@@ -1,9 +1,14 @@
 [package]
-name = "vx-core"
-description = "Memory management and Metal wrappers for VX"
+name = "vx-gpu"
+description = "Shared-memory Metal buffer management for Apple Silicon UMA"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme = "../README.md"
+keywords = ["gpu", "metal", "apple-silicon", "computer-vision"]
+categories = ["graphics", "os::macos-apis"]
 
 [dependencies]
 objc2.workspace            = true

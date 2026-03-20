@@ -85,7 +85,7 @@ impl HoughLines {
 
         // Zero-initialized accumulator
         let acc_size = (config.n_theta as usize) * (n_rho as usize);
-        let mut acc_buf = vx_core::UnifiedBuffer::<u32>::new(ctx.device(), acc_size)?;
+        let mut acc_buf = vx_gpu::UnifiedBuffer::<u32>::new(ctx.device(), acc_size)?;
         for v in acc_buf.as_mut_slice().iter_mut() {
             *v = 0;
         }
@@ -130,8 +130,8 @@ impl HoughLines {
         }
 
         // Pass 2: extract peaks with NMS
-        let line_buf = vx_core::UnifiedBuffer::<HoughLine>::new(ctx.device(), config.max_lines as usize)?;
-        let mut count_buf = vx_core::UnifiedBuffer::<u32>::new(ctx.device(), 1)?;
+        let line_buf = vx_gpu::UnifiedBuffer::<HoughLine>::new(ctx.device(), config.max_lines as usize)?;
+        let mut count_buf = vx_gpu::UnifiedBuffer::<u32>::new(ctx.device(), 1)?;
         count_buf.as_mut_slice()[0] = 0;
 
         {

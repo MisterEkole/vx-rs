@@ -12,7 +12,7 @@ use objc2_metal::{
     MTLSize,
 };
 
-use vx_core::UnifiedBuffer;
+use vx_gpu::UnifiedBuffer;
 use crate::context::Context;
 use crate::texture::Texture;
 use crate::types::{CornerPoint, HarrisParams};

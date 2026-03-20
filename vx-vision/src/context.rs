@@ -22,9 +22,9 @@ pub struct Context {
 impl Context {
     /// Initializes the default Metal device and loads the embedded shader library.
     pub fn new() -> Result<Self, String> {
-        let device = vx_core::default_device()
+        let device = vx_gpu::default_device()
             .ok_or_else(|| "No Metal device found (Apple Silicon or discrete GPU required)".to_string())?;
-        let queue = vx_core::new_queue(&device)?;
+        let queue = vx_gpu::new_queue(&device)?;
         let library = crate::load_library(&device)?;
 
         Ok(Self { device, queue, library })

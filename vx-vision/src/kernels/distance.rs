@@ -74,8 +74,8 @@ impl DistanceTransform {
         let n_pixels = (w as usize) * (h as usize);
 
         // Ping-pong seed buffers (uint2 per pixel)
-        let seeds_a = vx_core::UnifiedBuffer::<[u32; 2]>::new(ctx.device(), n_pixels)?;
-        let seeds_b = vx_core::UnifiedBuffer::<[u32; 2]>::new(ctx.device(), n_pixels)?;
+        let seeds_a = vx_gpu::UnifiedBuffer::<[u32; 2]>::new(ctx.device(), n_pixels)?;
+        let seeds_b = vx_gpu::UnifiedBuffer::<[u32; 2]>::new(ctx.device(), n_pixels)?;
 
         // Initialize seeds
         {

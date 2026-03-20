@@ -85,18 +85,18 @@ impl BruteMatcher {
             ratio_thresh: config.ratio_thresh,
         };
 
-        let mut query_buf = vx_core::UnifiedBuffer::<u32>::new(ctx.device(), query_desc.len())?;
+        let mut query_buf = vx_gpu::UnifiedBuffer::<u32>::new(ctx.device(), query_desc.len())?;
         query_buf.as_mut_slice().copy_from_slice(query_desc);
 
-        let mut train_buf = vx_core::UnifiedBuffer::<u32>::new(ctx.device(), train_desc.len())?;
+        let mut train_buf = vx_gpu::UnifiedBuffer::<u32>::new(ctx.device(), train_desc.len())?;
         train_buf.as_mut_slice().copy_from_slice(train_desc);
 
         // Distance matrix: n_query x n_train, u16
         let dist_size = (n_query as usize) * (n_train as usize);
-        let dist_buf = vx_core::UnifiedBuffer::<u16>::new(ctx.device(), dist_size)?;
+        let dist_buf = vx_gpu::UnifiedBuffer::<u16>::new(ctx.device(), dist_size)?;
 
-        let match_buf = vx_core::UnifiedBuffer::<MatchResult>::new(ctx.device(), n_query as usize)?;
-        let mut count_buf = vx_core::UnifiedBuffer::<u32>::new(ctx.device(), 1)?;
+        let match_buf = vx_gpu::UnifiedBuffer::<MatchResult>::new(ctx.device(), n_query as usize)?;
+        let mut count_buf = vx_gpu::UnifiedBuffer::<u32>::new(ctx.device(), 1)?;
         count_buf.as_mut_slice()[0] = 0;
 
         // Pass 1: Hamming distance matrix (2D dispatch over query x train)

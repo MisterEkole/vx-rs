@@ -88,9 +88,9 @@ impl ConnectedComponents {
         };
 
         // Ping-pong label buffers and atomic changed flag
-        let labels_a = vx_core::UnifiedBuffer::<u32>::new(ctx.device(), n_pixels)?;
-        let labels_b = vx_core::UnifiedBuffer::<u32>::new(ctx.device(), n_pixels)?;
-        let mut changed_buf = vx_core::UnifiedBuffer::<u32>::new(ctx.device(), 1)?;
+        let labels_a = vx_gpu::UnifiedBuffer::<u32>::new(ctx.device(), n_pixels)?;
+        let labels_b = vx_gpu::UnifiedBuffer::<u32>::new(ctx.device(), n_pixels)?;
+        let mut changed_buf = vx_gpu::UnifiedBuffer::<u32>::new(ctx.device(), 1)?;
 
         // Initialize labels
         {

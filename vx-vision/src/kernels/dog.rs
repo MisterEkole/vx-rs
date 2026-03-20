@@ -113,11 +113,11 @@ impl DoGDetector {
         }
 
         // Find 3x3x3 extrema across consecutive DoG triplets
-        let kp_buf = vx_core::UnifiedBuffer::<DoGKeypoint>::new(
+        let kp_buf = vx_gpu::UnifiedBuffer::<DoGKeypoint>::new(
             ctx.device(),
             config.max_keypoints as usize,
         )?;
-        let mut count_buf = vx_core::UnifiedBuffer::<u32>::new(ctx.device(), 1)?;
+        let mut count_buf = vx_gpu::UnifiedBuffer::<u32>::new(ctx.device(), 1)?;
         count_buf.as_mut_slice()[0] = 0;
 
         for i in 0..(n_dog.saturating_sub(2)) {

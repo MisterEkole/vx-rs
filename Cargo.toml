@@ -9,6 +9,8 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+authors = ["Mitterrand Ekole"]
+repository = "https://github.com/MisterEkole/vx-rs"
 
 [workspace.dependencies]
 objc2            = "0.6"
