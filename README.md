@@ -1,5 +1,8 @@
 # VX
 
+[![crates.io](https://img.shields.io/crates/v/vx-vision.svg)](https://crates.io/crates/vx-vision)
+[![license](https://img.shields.io/crates/l/vx-vision.svg)](LICENSE)
+
 A computer vision library in Rust that talks directly to Apple Silicon GPUs through Metal Shading Language.
 
 ## Why
