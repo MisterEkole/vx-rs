@@ -10,7 +10,14 @@
 
 ```toml
 [dependencies]
-vx-vision = "0.1"
+vx-vision = "0.3"
+```
+
+For 3D reconstruction and visualization, enable the feature flags:
+
+```toml
+[dependencies]
+vx-vision = { version = "0.3", features = ["full"] }
 ```
 
 ## Core concepts

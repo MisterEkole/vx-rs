@@ -31,3 +31,27 @@ pub mod indirect;
 pub mod matcher;
 pub mod sift;
 pub mod template_match;
+
+// ── 3D Reconstruction kernels ──
+#[cfg(feature = "reconstruction")]
+pub mod depth_colorize;
+#[cfg(feature = "reconstruction")]
+pub mod depth_filter;
+#[cfg(feature = "reconstruction")]
+pub mod depth_inpaint;
+#[cfg(feature = "reconstruction")]
+pub mod depth_to_cloud;
+#[cfg(feature = "reconstruction")]
+pub mod marching_cubes;
+#[cfg(feature = "reconstruction")]
+pub mod normal_estimation;
+#[cfg(feature = "reconstruction")]
+pub mod outlier_filter;
+#[cfg(feature = "reconstruction")]
+pub mod sgm;
+#[cfg(feature = "reconstruction")]
+pub mod triangulate;
+#[cfg(feature = "reconstruction")]
+pub mod tsdf;
+#[cfg(feature = "reconstruction")]
+pub mod voxel_downsample;

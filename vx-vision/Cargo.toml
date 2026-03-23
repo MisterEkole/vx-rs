@@ -19,8 +19,15 @@ include = [
     "Cargo.toml",
 ]
 
+[features]
+default = []
+reconstruction = []
+visualization = []
+datasets = []
+full = ["reconstruction", "visualization", "datasets"]
+
 [dependencies]
-vx-gpu = { path = "../vx-core", version = "0.2.0" }
+vx-gpu = { path = "../vx-core", version = "0.3.0" }
 
 objc2.workspace            = true
 objc2-foundation.workspace = true
@@ -62,3 +69,18 @@ path = "../examples/feature_matching_demo.rs"
 [[example]]
 name = "pipeline_pool_demo"
 path = "../examples/pipeline_pool_demo.rs"
+
+[[example]]
+name = "depth_to_cloud_demo"
+path = "../examples/depth_to_cloud_demo.rs"
+required-features = ["reconstruction"]
+
+[[example]]
+name = "point_cloud_processing_demo"
+path = "../examples/point_cloud_processing_demo.rs"
+required-features = ["reconstruction"]
+
+[[example]]
+name = "tsdf_fusion_demo"
+path = "../examples/tsdf_fusion_demo.rs"
+required-features = ["full"]

@@ -1,0 +1,193 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 520" font-family="system-ui, -apple-system, sans-serif" font-size="13">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#6b7280"/>
+    </marker>
+    <linearGradient id="grad-depth" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#3b82f6" stop-opacity="0.04"/>
+    </linearGradient>
+    <linearGradient id="grad-cloud" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#10b981" stop-opacity="0.04"/>
+    </linearGradient>
+    <linearGradient id="grad-volume" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#f59e0b" stop-opacity="0.04"/>
+    </linearGradient>
+    <linearGradient id="grad-mesh" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ef4444" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#ef4444" stop-opacity="0.04"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="720" height="520" rx="8" fill="#fafafa" stroke="#e5e7eb"/>
+
+  <!-- Title -->
+  <text x="360" y="30" text-anchor="middle" font-size="16" font-weight="600" fill="#111827">VX Reconstruction Pipeline</text>
+
+  <!-- Phase 1: Depth Estimation -->
+  <rect x="20" y="50" width="330" height="100" rx="6" fill="url(#grad-depth)" stroke="#3b82f6" stroke-opacity="0.3"/>
+  <text x="35" y="70" font-size="11" font-weight="600" fill="#3b82f6">DEPTH ESTIMATION</text>
+
+  <rect x="35" y="80" width="120" height="32" rx="4" fill="white" stroke="#3b82f6" stroke-opacity="0.5"/>
+  <text x="95" y="100" text-anchor="middle" font-size="11" fill="#1e40af">Stereo Pair</text>
+
+  <line x1="155" y1="96" x2="178" y2="96" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <rect x="180" y="80" width="80" height="32" rx="4" fill="#dbeafe" stroke="#3b82f6" stroke-opacity="0.5"/>
+  <text x="220" y="100" text-anchor="middle" font-size="11" font-weight="500" fill="#1e40af">SGM</text>
+
+  <line x1="260" y1="96" x2="273" y2="96" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <rect x="275" y="80" width="65" height="32" rx="4" fill="white" stroke="#3b82f6" stroke-opacity="0.5"/>
+  <text x="307" y="94" text-anchor="middle" font-size="10" fill="#1e40af">Disparity</text>
+  <text x="307" y="106" text-anchor="middle" font-size="10" fill="#1e40af">Map</text>
+
+  <!-- Depth post-processing -->
+  <rect x="35" y="118" width="80" height="26" rx="4" fill="#dbeafe" stroke="#3b82f6" stroke-opacity="0.4"/>
+  <text x="75" y="135" text-anchor="middle" font-size="10" fill="#1e40af">Bilateral</text>
+
+  <line x1="115" y1="131" x2="128" y2="131" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <rect x="130" y="118" width="65" height="26" rx="4" fill="#dbeafe" stroke="#3b82f6" stroke-opacity="0.4"/>
+  <text x="162" y="135" text-anchor="middle" font-size="10" fill="#1e40af">Median</text>
+
+  <line x1="195" y1="131" x2="208" y2="131" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <rect x="210" y="118" width="65" height="26" rx="4" fill="#dbeafe" stroke="#3b82f6" stroke-opacity="0.4"/>
+  <text x="242" y="135" text-anchor="middle" font-size="10" fill="#1e40af">Inpaint</text>
+
+  <line x1="275" y1="131" x2="288" y2="131" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <rect x="290" y="118" width="50" height="26" rx="4" fill="white" stroke="#3b82f6" stroke-opacity="0.5"/>
+  <text x="315" y="135" text-anchor="middle" font-size="10" fill="#1e40af">Depth</text>
+
+  <!-- Arrow down to point cloud phase -->
+  <line x1="315" y1="150" x2="315" y2="175" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <!-- Phase 2: Point Cloud -->
+  <rect x="20" y="180" width="680" height="100" rx="6" fill="url(#grad-cloud)" stroke="#10b981" stroke-opacity="0.3"/>
+  <text x="35" y="200" font-size="11" font-weight="600" fill="#059669">POINT CLOUD PROCESSING</text>
+
+  <rect x="35" y="210" width="95" height="32" rx="4" fill="#d1fae5" stroke="#10b981" stroke-opacity="0.5"/>
+  <text x="82" y="224" text-anchor="middle" font-size="10" font-weight="500" fill="#065f46">Depth-to-</text>
+  <text x="82" y="236" text-anchor="middle" font-size="10" font-weight="500" fill="#065f46">Cloud</text>
+
+  <line x1="130" y1="226" x2="148" y2="226" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <rect x="150" y="210" width="80" height="32" rx="4" fill="white" stroke="#10b981" stroke-opacity="0.5"/>
+  <text x="190" y="230" text-anchor="middle" font-size="11" fill="#065f46">Point Cloud</text>
+
+  <line x1="230" y1="226" x2="248" y2="226" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <rect x="250" y="210" width="80" height="32" rx="4" fill="#d1fae5" stroke="#10b981" stroke-opacity="0.5"/>
+  <text x="290" y="230" text-anchor="middle" font-size="10" font-weight="500" fill="#065f46">Normals</text>
+
+  <line x1="330" y1="226" x2="348" y2="226" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <rect x="350" y="210" width="90" height="32" rx="4" fill="#d1fae5" stroke="#10b981" stroke-opacity="0.5"/>
+  <text x="395" y="224" text-anchor="middle" font-size="10" font-weight="500" fill="#065f46">Outlier</text>
+  <text x="395" y="236" text-anchor="middle" font-size="10" font-weight="500" fill="#065f46">Removal</text>
+
+  <line x1="440" y1="226" x2="458" y2="226" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <rect x="460" y="210" width="90" height="32" rx="4" fill="#d1fae5" stroke="#10b981" stroke-opacity="0.5"/>
+  <text x="505" y="224" text-anchor="middle" font-size="10" font-weight="500" fill="#065f46">Voxel</text>
+  <text x="505" y="236" text-anchor="middle" font-size="10" font-weight="500" fill="#065f46">Downsample</text>
+
+  <line x1="550" y1="226" x2="568" y2="226" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <rect x="570" y="210" width="120" height="32" rx="4" fill="white" stroke="#10b981" stroke-opacity="0.5"/>
+  <text x="630" y="224" text-anchor="middle" font-size="10" fill="#065f46">Clean Cloud</text>
+  <text x="630" y="236" text-anchor="middle" font-size="10" fill="#065f46">+ Normals</text>
+
+  <!-- Colorize branch -->
+  <rect x="35" y="250" width="95" height="26" rx="4" fill="#d1fae5" stroke="#10b981" stroke-opacity="0.4"/>
+  <text x="82" y="267" text-anchor="middle" font-size="10" fill="#065f46">Colorize</text>
+
+  <rect x="150" y="250" width="80" height="26" rx="4" fill="white" stroke="#10b981" stroke-opacity="0.4"/>
+  <text x="190" y="267" text-anchor="middle" font-size="10" fill="#065f46">RGBA Image</text>
+
+  <line x1="130" y1="263" x2="148" y2="263" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <!-- Arrow down to volume phase -->
+  <line x1="360" y1="280" x2="360" y2="310" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <!-- Phase 3: TSDF Volume -->
+  <rect x="20" y="315" width="680" height="80" rx="6" fill="url(#grad-volume)" stroke="#f59e0b" stroke-opacity="0.3"/>
+  <text x="35" y="335" font-size="11" font-weight="600" fill="#d97706">TSDF VOLUME FUSION</text>
+
+  <rect x="35" y="345" width="120" height="32" rx="4" fill="white" stroke="#f59e0b" stroke-opacity="0.5"/>
+  <text x="95" y="359" text-anchor="middle" font-size="10" fill="#92400e">Depth Frames</text>
+  <text x="95" y="371" text-anchor="middle" font-size="10" fill="#92400e">+ Camera Poses</text>
+
+  <line x1="155" y1="361" x2="178" y2="361" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <rect x="180" y="345" width="100" height="32" rx="4" fill="#fef3c7" stroke="#f59e0b" stroke-opacity="0.5"/>
+  <text x="230" y="365" text-anchor="middle" font-size="10" font-weight="500" fill="#92400e">TSDF Integrate</text>
+
+  <line x1="280" y1="361" x2="303" y2="361" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <rect x="305" y="345" width="95" height="32" rx="4" fill="white" stroke="#f59e0b" stroke-opacity="0.5"/>
+  <text x="352" y="365" text-anchor="middle" font-size="11" fill="#92400e">Voxel Grid</text>
+
+  <line x1="400" y1="361" x2="423" y2="361" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <rect x="425" y="345" width="95" height="32" rx="4" fill="#fef3c7" stroke="#f59e0b" stroke-opacity="0.5"/>
+  <text x="472" y="365" text-anchor="middle" font-size="10" font-weight="500" fill="#92400e">TSDF Raycast</text>
+
+  <line x1="520" y1="361" x2="543" y2="361" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <rect x="545" y="345" width="100" height="32" rx="4" fill="white" stroke="#f59e0b" stroke-opacity="0.5"/>
+  <text x="595" y="359" text-anchor="middle" font-size="10" fill="#92400e">Synthetic Depth</text>
+  <text x="595" y="371" text-anchor="middle" font-size="10" fill="#92400e">+ Normals</text>
+
+  <!-- Arrow down to mesh phase -->
+  <line x1="352" y1="395" x2="352" y2="420" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <!-- Phase 4: Mesh Extraction -->
+  <rect x="20" y="425" width="680" height="80" rx="6" fill="url(#grad-mesh)" stroke="#ef4444" stroke-opacity="0.3"/>
+  <text x="35" y="445" font-size="11" font-weight="600" fill="#dc2626">MESH EXTRACTION &amp; EXPORT</text>
+
+  <rect x="35" y="455" width="105" height="32" rx="4" fill="#fee2e2" stroke="#ef4444" stroke-opacity="0.5"/>
+  <text x="87" y="469" text-anchor="middle" font-size="10" font-weight="500" fill="#991b1b">Marching</text>
+  <text x="87" y="481" text-anchor="middle" font-size="10" font-weight="500" fill="#991b1b">Cubes</text>
+
+  <line x1="140" y1="471" x2="158" y2="471" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <rect x="160" y="455" width="65" height="32" rx="4" fill="#fee2e2" stroke="#ef4444" stroke-opacity="0.4"/>
+  <text x="192" y="475" text-anchor="middle" font-size="10" fill="#991b1b">Weld</text>
+
+  <line x1="225" y1="471" x2="243" y2="471" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <rect x="245" y="455" width="75" height="32" rx="4" fill="#fee2e2" stroke="#ef4444" stroke-opacity="0.4"/>
+  <text x="282" y="475" text-anchor="middle" font-size="10" fill="#991b1b">Normals</text>
+
+  <line x1="320" y1="471" x2="338" y2="471" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <rect x="340" y="455" width="80" height="32" rx="4" fill="#fee2e2" stroke="#ef4444" stroke-opacity="0.4"/>
+  <text x="380" y="475" text-anchor="middle" font-size="10" fill="#991b1b">Decimate</text>
+
+  <line x1="420" y1="471" x2="438" y2="471" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <rect x="440" y="455" width="65" height="32" rx="4" fill="white" stroke="#ef4444" stroke-opacity="0.5"/>
+  <text x="472" y="475" text-anchor="middle" font-size="11" fill="#991b1b">Mesh</text>
+
+  <line x1="505" y1="471" x2="523" y2="471" stroke="#6b7280" marker-end="url(#arrow)"/>
+
+  <rect x="525" y="455" width="60" height="32" rx="4" fill="white" stroke="#6b7280" stroke-opacity="0.4"/>
+  <text x="555" y="475" text-anchor="middle" font-size="10" fill="#374151">OBJ</text>
+
+  <rect x="595" y="455" width="60" height="32" rx="4" fill="white" stroke="#6b7280" stroke-opacity="0.4"/>
+  <text x="625" y="475" text-anchor="middle" font-size="10" fill="#374151">PLY</text>
+
+  <!-- GPU badge -->
+  <rect x="370" y="50" width="330" height="100" rx="6" fill="none" stroke="#e5e7eb" stroke-dasharray="4"/>
+  <text x="535" y="70" text-anchor="middle" font-size="11" font-weight="600" fill="#9ca3af">METAL GPU KERNELS</text>
+  <text x="535" y="90" text-anchor="middle" font-size="10" fill="#9ca3af">42 compute + render shaders</text>
+  <text x="535" y="108" text-anchor="middle" font-size="10" fill="#9ca3af">Zero-copy UMA (Apple Silicon)</text>
+  <text x="535" y="126" text-anchor="middle" font-size="10" fill="#9ca3af">Pipeline batching via encode()</text>
+  <text x="535" y="144" text-anchor="middle" font-size="10" fill="#9ca3af">All kernels: config -> new() -> compute()</text>
+</svg>

@@ -1247,7 +1247,7 @@ dependencies = [
 
 [[package]]
 name = "vx-gpu"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
  "objc2",
@@ -1257,7 +1257,7 @@ dependencies = [
 
 [[package]]
 name = "vx-vision"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
  "criterion",

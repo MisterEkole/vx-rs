@@ -53,3 +53,39 @@ Runs the full stereo pipeline on synthetic or real stereo pairs: FAST detection,
 Benchmarks three approaches to multi-frame processing: individual dispatches, pipeline batching, and pipeline + TexturePool. Reports timing comparison and pool hit rates.
 
 **Demonstrates:** `Pipeline`, `TexturePool`, performance comparison.
+
+---
+
+## 3D Reconstruction Examples
+
+These require the `reconstruction` feature: `cargo run --release --features reconstruction --example <name>`
+
+## depth_to_cloud_demo
+
+Takes a grayscale image, creates a synthetic stereo pair, runs SGM stereo matching, colorizes the depth map, unprojects to a 3D point cloud, and exports to PLY.
+
+```bash
+cargo run --release --features reconstruction --example depth_to_cloud_demo -- path/to/image.png
+```
+
+**Demonstrates:** `SGMStereo`, `DepthColorize`, `DepthToCloud`, `PointCloud`, PLY export.
+
+## point_cloud_processing_demo
+
+Generates a synthetic sphere point cloud with noise and outliers, then demonstrates the full processing pipeline: normal estimation, outlier removal, voxel downsampling, and PLY export. No image input needed.
+
+```bash
+cargo run --release --features reconstruction --example point_cloud_processing_demo
+```
+
+**Demonstrates:** `NormalEstimator`, `OutlierFilter`, `VoxelDownsample`, `PointCloud`.
+
+## tsdf_fusion_demo
+
+Creates a TSDF volume, generates synthetic depth frames of a sphere from multiple views, integrates them into the volume, extracts surface points and a triangle mesh via Marching Cubes, and exports to OBJ and PLY. No image input needed.
+
+```bash
+cargo run --release --features reconstruction --example tsdf_fusion_demo
+```
+
+**Demonstrates:** `TSDFVolume`, `MarchingCubes`, `Mesh`, OBJ/PLY export, the complete depth→volume→mesh pipeline.

@@ -6,7 +6,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
 authors = ["Mitterrand Ekole"]
@@ -23,10 +23,16 @@ objc2-metal      = { version = "0.3", features = [
     "MTLCommandEncoder",
     "MTLComputeCommandEncoder",
     "MTLComputePipeline",
+    "MTLRenderCommandEncoder",
+    "MTLRenderPipeline",
+    "MTLRenderPass",
+    "MTLDepthStencil",
     "MTLBuffer",
     "MTLTexture",
     "MTLLibrary",
     "MTLResource",
     "MTLTypes",
+    "MTLPixelFormat",
+    "MTLVertexDescriptor",
 ]}
 bytemuck = { version = "1", features = ["derive"] }

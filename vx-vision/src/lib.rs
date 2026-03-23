@@ -11,6 +11,21 @@ pub mod pool;
 pub mod texture;
 pub mod types;
 
+#[cfg(feature = "reconstruction")]
+pub mod export;
+#[cfg(feature = "reconstruction")]
+pub mod mesh_ops;
+#[cfg(feature = "reconstruction")]
+pub mod types_3d;
+
+#[cfg(feature = "datasets")]
+pub mod datasets;
+
+#[cfg(feature = "visualization")]
+pub mod render_context;
+#[cfg(feature = "visualization")]
+pub mod renderers;
+
 pub use context::Context;
 pub use error::Error;
 pub use pipeline::Pipeline;

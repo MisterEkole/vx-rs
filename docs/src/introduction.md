@@ -6,7 +6,7 @@ VX talks directly to the Metal GPU through compute shaders, using Apple Silicon'
 
 ## What it does
 
-28 GPU kernels covering classical computer vision: feature detection (FAST, Harris, ORB, SIFT), image processing (Gaussian, bilateral, Canny, morphology, thresholding), geometry (pyramids, warping, homography), motion (KLT tracking, dense flow), stereo matching, and analysis (Hough lines, template matching, distance transforms, connected components).
+42 GPU kernels covering classical computer vision and 3D reconstruction: feature detection (FAST, Harris, ORB, SIFT), image processing (Gaussian, bilateral, Canny, morphology, thresholding), geometry (pyramids, warping, homography), motion (KLT tracking, dense flow), stereo matching, 3D reconstruction (SGM stereo, TSDF fusion, marching cubes, point cloud processing), visualization (mesh and point cloud renderers), and analysis (Hough lines, template matching, distance transforms, connected components).
 
 ## Why it exists
 

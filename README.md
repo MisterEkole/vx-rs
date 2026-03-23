@@ -55,7 +55,9 @@ No `unsafe` in user code. No Metal imports. No GPU boilerplate.
 | **Geometry** | Resize (bilinear), image pyramid, warp (affine/perspective), homography, lens undistortion |
 | **Analysis** | Template matching (NCC), Hough lines, integral image, distance transform (JFA), connected components |
 | **Motion & Stereo** | KLT optical flow, dense flow, stereo matching, brute-force descriptor matching |
-| **Utilities** | Non-maximum suppression, texture pool, pipeline batching |
+| **3D Reconstruction** | SGM stereo, depth filter (bilateral/median), depth inpaint, depth-to-cloud, normal estimation, outlier removal, voxel downsample, TSDF fusion (integrate/raycast), marching cubes, triangulation |
+| **Visualization** | Point cloud renderer, mesh renderer (Phong), depth colorize (turbo/jet/inferno) |
+| **Utilities** | Non-maximum suppression, texture pool, pipeline batching, PLY/OBJ export |
 
 ## Building
 
@@ -71,6 +73,22 @@ The build script automatically compiles all `.metal` shaders into a single metal
 
 See the [documentation](docs/src/getting-started.md) for a detailed setup guide.
 
+## Feature Flags
+
+The 3D reconstruction and visualization APIs are behind feature flags to keep default builds lean:
+
+| Flag | What it enables |
+|---|---|
+| `reconstruction` | 3D types, depth kernels, point cloud ops, TSDF fusion, meshing, export |
+| `visualization` | Point cloud and mesh renderers, offscreen render targets |
+| `datasets` | TUM RGB-D, EuRoC, KITTI dataset loaders |
+| `full` | Everything |
+
+```
+cargo build --features reconstruction
+cargo run --features full --example tsdf_fusion_demo
+```
+
 ## Documentation
 
 Full documentation is available at **[misterekole.github.io/vx-rs](https://misterekole.github.io/vx-rs/)**.
@@ -78,6 +96,8 @@ Full documentation is available at **[misterekole.github.io/vx-rs](https://miste
 - [Getting Started](https://misterekole.github.io/vx-rs/getting-started.html) — installation, core concepts, first program
 - [Architecture](https://misterekole.github.io/vx-rs/architecture.html) — three-layer stack, shader-kernel contract, memory model
 - [API Reference](https://misterekole.github.io/vx-rs/api/detection.html) — every kernel with usage examples
+- [3D Reconstruction](https://misterekole.github.io/vx-rs/api/reconstruction.html) — depth estimation, TSDF fusion, meshing, point clouds
+- [Stereo-to-Mesh Tutorial](https://misterekole.github.io/vx-rs/reconstruction-guide.html) — end-to-end reconstruction pipeline
 - [Pipeline & Performance](https://misterekole.github.io/vx-rs/performance.html) — batching, TexturePool, optimization
 - [Adding a Kernel](https://misterekole.github.io/vx-rs/adding-a-kernel.html) — contributor guide
 

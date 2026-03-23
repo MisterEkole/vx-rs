@@ -421,3 +421,200 @@ pub struct IndirectArgs {
     pub threadgroups_y: u32,
     pub threadgroups_z: u32,
 }
+
+// ── 3D Reconstruction types ────────────────────────────────────────────
+
+/// GPU-side camera extrinsics packed as 3 rows of `float4`.
+/// Each row: `[r0, r1, r2, t]` where r is a rotation row and t is the translation component.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct CameraExtrinsicsParams {
+    pub row0: [f32; 4],
+    pub row1: [f32; 4],
+    pub row2: [f32; 4],
+}
+
+/// GPU-side 3D point with position, color, and normal.
+/// Uses individual floats instead of float3 to avoid Metal alignment issues.
+/// Layout: px py pz _pad0 color[4] nx ny nz _pad1 = 40 bytes.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct GpuPoint3D {
+    pub position: [f32; 3], // offset 0, 12 bytes
+    pub _pad0: f32,         // offset 12, 4 bytes → 16 total
+    pub color: [u8; 4],     // offset 16, 4 bytes → 20 total
+    pub normal: [f32; 3],   // offset 20, 12 bytes → 32 total
+    pub _pad1: f32,         // offset 32, 4 bytes → 36 total
+}
+
+/// GPU parameters for Semi-Global Matching stereo.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct SGMParams {
+    pub width: u32,
+    pub height: u32,
+    pub num_disparities: u32,
+    pub p1: f32,
+    pub p2: f32,
+    pub census_radius_x: u32,
+    pub census_radius_y: u32,
+    pub direction_x: u32,
+    pub direction_y: i32,
+}
+
+/// GPU parameters for depth bilateral filter.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct DepthBilateralParams {
+    pub width: u32,
+    pub height: u32,
+    pub radius: i32,
+    pub sigma_spatial: f32,
+    pub sigma_depth: f32,
+}
+
+/// GPU parameters for depth median filter.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct DepthMedianParams {
+    pub width: u32,
+    pub height: u32,
+    pub radius: i32,
+}
+
+/// GPU parameters for depth inpainting.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct DepthInpaintParams {
+    pub width: u32,
+    pub height: u32,
+    pub step_size: i32,
+}
+
+/// GPU parameters for depth-to-point-cloud unprojection.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct DepthToCloudParams {
+    pub fx: f32,
+    pub fy: f32,
+    pub cx: f32,
+    pub cy: f32,
+    pub min_depth: f32,
+    pub max_depth: f32,
+    pub depth_scale: f32,
+    pub width: u32,
+    pub height: u32,
+    pub max_points: u32,
+}
+
+/// GPU parameters for depth colorization.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct DepthColorizeParams {
+    pub min_depth: f32,
+    pub max_depth: f32,
+    pub colormap_id: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// GPU parameters for organized normal estimation.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct NormalEstParams {
+    pub fx: f32,
+    pub fy: f32,
+    pub cx: f32,
+    pub cy: f32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// GPU parameters for unorganized normal estimation.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct NormalEstUnorgParams {
+    pub n_points: u32,
+    pub radius: f32,
+    pub max_neighbors: u32,
+}
+
+/// GPU parameters for outlier filter.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct OutlierParams {
+    pub n_points: u32,
+    pub k_neighbors: u32,
+    pub std_ratio: f32,
+}
+
+/// GPU parameters for voxel downsampling.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct VoxelDownsampleParams {
+    pub n_points: u32,
+    pub voxel_size: f32,
+    pub origin_x: f32,
+    pub origin_y: f32,
+    pub origin_z: f32,
+    pub table_size: u32,
+}
+
+/// GPU point with XYZ + padding (matches Metal PointXYZ struct).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct PointXYZ {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub _pad: f32,
+}
+
+/// GPU parameters for TSDF volume integration.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct TSDFIntegrateParams {
+    pub res_x: u32,
+    pub res_y: u32,
+    pub res_z: u32,
+    pub voxel_size: f32,
+    pub origin_x: f32,
+    pub origin_y: f32,
+    pub origin_z: f32,
+    pub truncation_dist: f32,
+    pub max_weight: f32,
+    pub fx: f32,
+    pub fy: f32,
+    pub cx: f32,
+    pub cy: f32,
+    pub img_width: u32,
+    pub img_height: u32,
+    pub _pad0: f32, // align pose rows to 16 bytes
+    pub pose_row0: [f32; 4],
+    pub pose_row1: [f32; 4],
+    pub pose_row2: [f32; 4],
+}
+
+/// GPU parameters for TSDF volume raycasting.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct TSDFRaycastParams {
+    pub res_x: u32,
+    pub res_y: u32,
+    pub res_z: u32,
+    pub voxel_size: f32,
+    pub origin_x: f32,
+    pub origin_y: f32,
+    pub origin_z: f32,
+    pub truncation_dist: f32,
+    pub fx: f32,
+    pub fy: f32,
+    pub cx: f32,
+    pub cy: f32,
+    pub img_width: u32,
+    pub img_height: u32,
+    pub _pad0: [f32; 2], // align pose rows to 16 bytes
+    pub inv_pose_row0: [f32; 4],
+    pub inv_pose_row1: [f32; 4],
+    pub inv_pose_row2: [f32; 4],
+}
