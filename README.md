@@ -73,21 +73,13 @@ See the [documentation](docs/src/getting-started.md) for a detailed setup guide.
 
 ## Documentation
 
-Build the docs locally with [mdBook](https://rust-lang.github.io/mdBook/):
+Full documentation is available at **[misterekole.github.io/vx-rs](https://misterekole.github.io/vx-rs/)**.
 
-```bash
-cargo install mdbook
-cd docs && mdbook serve
-```
-
-Or read the source directly:
-
-- [Introduction](docs/src/introduction.md)
-- [Getting Started](docs/src/getting-started.md) — installation, core concepts, first program
-- [Architecture](docs/src/architecture.md) — three-layer stack, shader-kernel contract, memory model
-- [API Reference](docs/src/api/detection.md) — every kernel with usage examples
-- [Pipeline & Performance](docs/src/performance.md) — batching, TexturePool, optimization
-- [Adding a Kernel](docs/src/adding-a-kernel.md) — contributor guide
+- [Getting Started](https://misterekole.github.io/vx-rs/getting-started.html) — installation, core concepts, first program
+- [Architecture](https://misterekole.github.io/vx-rs/architecture.html) — three-layer stack, shader-kernel contract, memory model
+- [API Reference](https://misterekole.github.io/vx-rs/api/detection.html) — every kernel with usage examples
+- [Pipeline & Performance](https://misterekole.github.io/vx-rs/performance.html) — batching, TexturePool, optimization
+- [Adding a Kernel](https://misterekole.github.io/vx-rs/adding-a-kernel.html) — contributor guide
 
 ## License
 
