@@ -10,6 +10,8 @@ use objc2_metal::{
     MTLTexture as MTLTextureTrait, MTLTextureDescriptor, MTLTextureUsage,
 };
 
+use crate::error::{Error, Result};
+
 /// Pixel format of a [`Texture`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TextureFormat {
@@ -38,13 +40,13 @@ impl Texture {
         pixels: &[u8],
         width: u32,
         height: u32,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         let expected = (width as usize) * (height as usize);
         if pixels.len() != expected {
-            return Err(format!(
-                "Expected {} bytes for {}x{} R8 texture, got {}",
+            return Err(Error::InvalidConfig(format!(
+                "expected {} bytes for {}x{} R8 texture, got {}",
                 expected, width, height, pixels.len()
-            ));
+            )));
         }
 
         let desc = unsafe {
@@ -59,7 +61,7 @@ impl Texture {
 
         let raw = device
             .newTextureWithDescriptor(&desc)
-            .ok_or("Failed to create Metal texture")?;
+            .ok_or(Error::Gpu("failed to create Metal texture".into()))?;
 
         let region = MTLRegion {
             origin: MTLOrigin { x: 0, y: 0, z: 0 },
@@ -88,13 +90,13 @@ impl Texture {
         data:   &[f32],
         width:  u32,
         height: u32,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         let expected = (width as usize) * (height as usize);
         if data.len() != expected {
-            return Err(format!(
-                "Expected {} f32 values for {}x{} R32Float texture, got {}",
+            return Err(Error::InvalidConfig(format!(
+                "expected {} f32 values for {}x{} R32Float texture, got {}",
                 expected, width, height, data.len()
-            ));
+            )));
         }
 
         let desc = unsafe {
@@ -109,7 +111,7 @@ impl Texture {
 
         let raw = device
             .newTextureWithDescriptor(&desc)
-            .ok_or("Failed to create R32Float Metal texture")?;
+            .ok_or(Error::Gpu("failed to create R32Float Metal texture".into()))?;
 
         let region = MTLRegion {
             origin: MTLOrigin { x: 0, y: 0, z: 0 },
@@ -137,7 +139,7 @@ impl Texture {
         device: &ProtocolObject<dyn MTLDevice>,
         width:  u32,
         height: u32,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         let desc = unsafe {
             MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
                 MTLPixelFormat::R8Unorm,
@@ -150,7 +152,7 @@ impl Texture {
 
         let raw = device
             .newTextureWithDescriptor(&desc)
-            .ok_or("Failed to create output Metal texture")?;
+            .ok_or(Error::Gpu("failed to create output Metal texture".into()))?;
 
         Ok(Self { raw, width, height, format: TextureFormat::R8Unorm })
     }
@@ -160,7 +162,7 @@ impl Texture {
         device: &ProtocolObject<dyn MTLDevice>,
         width:  u32,
         height: u32,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         let desc = unsafe {
             MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
                 MTLPixelFormat::R32Float,
@@ -173,7 +175,7 @@ impl Texture {
 
         let raw = device
             .newTextureWithDescriptor(&desc)
-            .ok_or("Failed to create intermediate R32Float texture")?;
+            .ok_or(Error::Gpu("failed to create intermediate R32Float texture".into()))?;
 
         Ok(Self { raw, width, height, format: TextureFormat::R32Float })
     }
@@ -183,7 +185,7 @@ impl Texture {
         device: &ProtocolObject<dyn MTLDevice>,
         width:  u32,
         height: u32,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         let desc = unsafe {
             MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
                 MTLPixelFormat::R8Unorm,
@@ -196,7 +198,7 @@ impl Texture {
 
         let raw = device
             .newTextureWithDescriptor(&desc)
-            .ok_or("Failed to create intermediate R8Unorm texture")?;
+            .ok_or(Error::Gpu("failed to create intermediate R8Unorm texture".into()))?;
 
         Ok(Self { raw, width, height, format: TextureFormat::R8Unorm })
     }
@@ -207,13 +209,13 @@ impl Texture {
         pixels: &[u8],
         width:  u32,
         height: u32,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         let expected = (width as usize) * (height as usize) * 4;
         if pixels.len() != expected {
-            return Err(format!(
-                "Expected {} bytes for {}x{} RGBA8 texture, got {}",
+            return Err(Error::InvalidConfig(format!(
+                "expected {} bytes for {}x{} RGBA8 texture, got {}",
                 expected, width, height, pixels.len()
-            ));
+            )));
         }
 
         let desc = unsafe {
@@ -228,7 +230,7 @@ impl Texture {
 
         let raw = device
             .newTextureWithDescriptor(&desc)
-            .ok_or("Failed to create RGBA8 Metal texture")?;
+            .ok_or(Error::Gpu("failed to create RGBA8 Metal texture".into()))?;
 
         let region = MTLRegion {
             origin: MTLOrigin { x: 0, y: 0, z: 0 },
@@ -256,7 +258,7 @@ impl Texture {
         device: &ProtocolObject<dyn MTLDevice>,
         width:  u32,
         height: u32,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         let desc = unsafe {
             MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
                 MTLPixelFormat::RGBA8Unorm,
@@ -269,7 +271,7 @@ impl Texture {
 
         let raw = device
             .newTextureWithDescriptor(&desc)
-            .ok_or("Failed to create output RGBA8 texture")?;
+            .ok_or(Error::Gpu("failed to create output RGBA8 texture".into()))?;
 
         Ok(Self { raw, width, height, format: TextureFormat::RGBA8Unorm })
     }
@@ -279,7 +281,7 @@ impl Texture {
         device: &ProtocolObject<dyn MTLDevice>,
         width:  u32,
         height: u32,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         let desc = unsafe {
             MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
                 MTLPixelFormat::R32Float,
@@ -292,14 +294,12 @@ impl Texture {
 
         let raw = device
             .newTextureWithDescriptor(&desc)
-            .ok_or("Failed to create output R32Float texture")?;
+            .ok_or(Error::Gpu("failed to create output R32Float texture".into()))?;
 
         Ok(Self { raw, width, height, format: TextureFormat::R32Float })
     }
 
-    /// Reads back the texture contents as `width * height` R8 bytes.
-    ///
-    /// Must be called after the writing command buffer has completed.
+    /// Reads back as `width * height` R8 bytes. Call after GPU completion.
     pub fn read_gray8(&self) -> Vec<u8> {
         let n = (self.width as usize) * (self.height as usize);
         let mut buf = vec![0u8; n];
@@ -325,7 +325,7 @@ impl Texture {
         buf
     }
 
-    /// Reads back the texture contents as `width * height * 4` RGBA bytes.
+    /// Reads back as `width * height * 4` RGBA bytes.
     pub fn read_rgba8(&self) -> Vec<u8> {
         let n = (self.width as usize) * (self.height as usize) * 4;
         let mut buf = vec![0u8; n];
@@ -351,7 +351,7 @@ impl Texture {
         buf
     }
 
-    /// Reads back the texture contents as `width * height` floats.
+    /// Reads back as `width * height` floats.
     pub fn read_r32float(&self) -> Vec<f32> {
         let n = (self.width as usize) * (self.height as usize);
         let mut buf = vec![0.0f32; n];
@@ -397,9 +397,6 @@ impl Texture {
     }
 
     /// Wraps an existing `MTLTexture` without copying data.
-    ///
-    /// Intended for zero-copy AVFoundation / Core Video integration.
-    /// The caller must ensure the underlying texture outlives this wrapper.
     pub fn from_metal_texture(
         raw:    Retained<ProtocolObject<dyn MTLTextureTrait>>,
         width:  u32,
@@ -409,3 +406,8 @@ impl Texture {
         Self { raw, width, height, format }
     }
 }
+
+// SAFETY: MTLTexture is reference-counted and safe to send between threads.
+unsafe impl Send for Texture {}
+// SAFETY: Texture only provides shared (&self) read access to the underlying MTLTexture.
+unsafe impl Sync for Texture {}

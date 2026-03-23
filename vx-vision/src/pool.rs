@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use crate::context::Context;
+use crate::error::Result;
 use crate::texture::{Texture, TextureFormat};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -47,7 +48,7 @@ impl TexturePool {
         ctx:    &Context,
         width:  u32,
         height: u32,
-    ) -> Result<Texture, String> {
+    ) -> Result<Texture> {
         self.acquire(ctx, width, height, TextureFormat::R8Unorm)
     }
 
@@ -57,7 +58,7 @@ impl TexturePool {
         ctx:    &Context,
         width:  u32,
         height: u32,
-    ) -> Result<Texture, String> {
+    ) -> Result<Texture> {
         self.acquire(ctx, width, height, TextureFormat::R32Float)
     }
 
@@ -67,7 +68,7 @@ impl TexturePool {
         ctx:    &Context,
         width:  u32,
         height: u32,
-    ) -> Result<Texture, String> {
+    ) -> Result<Texture> {
         self.acquire(ctx, width, height, TextureFormat::RGBA8Unorm)
     }
 
@@ -78,7 +79,7 @@ impl TexturePool {
         width:  u32,
         height: u32,
         format: TextureFormat,
-    ) -> Result<Texture, String> {
+    ) -> Result<Texture> {
         self.acquires += 1;
         let key = PoolKey { width, height, format };
 
@@ -144,12 +145,12 @@ impl TexturePool {
         width: u32,
         height: u32,
         format: TextureFormat,
-    ) -> Result<Texture, String> {
-        match format {
-            TextureFormat::R8Unorm => Texture::intermediate_gray8(ctx.device(), width, height),
-            TextureFormat::R32Float => Texture::intermediate_r32float(ctx.device(), width, height),
-            TextureFormat::RGBA8Unorm => Texture::output_rgba8(ctx.device(), width, height),
-        }
+    ) -> Result<Texture> {
+        Ok(match format {
+            TextureFormat::R8Unorm => Texture::intermediate_gray8(ctx.device(), width, height)?,
+            TextureFormat::R32Float => Texture::intermediate_r32float(ctx.device(), width, height)?,
+            TextureFormat::RGBA8Unorm => Texture::output_rgba8(ctx.device(), width, height)?,
+        })
     }
 }
 

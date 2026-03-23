@@ -7,18 +7,20 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 readme = "../README.md"
+documentation.workspace = true
 keywords = ["gpu", "metal", "computer-vision", "apple-silicon", "image-processing"]
 categories = ["computer-vision", "graphics", "os::macos-apis"]
 include = [
     "src/**/*.rs",
     "shaders/**/*.metal",
     "tests/**/*.rs",
+    "benches/**/*.rs",
     "build.rs",
     "Cargo.toml",
 ]
 
 [dependencies]
-vx-gpu = { path = "../vx-core", version = "0.1.0" }
+vx-gpu = { path = "../vx-core", version = "0.2.0" }
 
 objc2.workspace            = true
 objc2-foundation.workspace = true
@@ -27,6 +29,11 @@ bytemuck.workspace         = true
 
 [dev-dependencies]
 image = "0.25"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "kernel_benchmarks"
+harness = false
 
 [[example]]
 name = "fast_demo"

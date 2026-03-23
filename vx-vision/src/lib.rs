@@ -4,6 +4,7 @@
 //! kernel structs in [`kernels`]. Users never need to import `objc2-metal`.
 
 pub mod context;
+pub mod error;
 pub mod kernels;
 pub mod pipeline;
 pub mod pool;
@@ -11,6 +12,7 @@ pub mod texture;
 pub mod types;
 
 pub use context::Context;
+pub use error::Error;
 pub use pipeline::Pipeline;
 pub use pool::TexturePool;
 pub use texture::{Texture, TextureFormat};
@@ -24,6 +26,6 @@ static METALLIB_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/vx.meta
 /// Loads the embedded VX shader library onto `device`.
 pub(crate) fn load_library(
     device: &ProtocolObject<dyn MTLDevice>,
-) -> Result<Retained<ProtocolObject<dyn MTLLibrary>>, String> {
-    vx_gpu::load_library_from_bytes(device, METALLIB_BYTES)
+) -> error::Result<Retained<ProtocolObject<dyn MTLLibrary>>> {
+    vx_gpu::load_library_from_bytes(device, METALLIB_BYTES).map_err(error::Error::from)
 }

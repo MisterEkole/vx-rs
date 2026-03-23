@@ -11,10 +11,6 @@ use objc2::runtime::ProtocolObject;
 use objc2_metal::{MTLBuffer, MTLDevice, MTLResourceOptions};
 
 /// A typed Metal buffer using `MTLStorageModeShared` for zero-copy CPU/GPU access.
-///
-/// `T` must implement [`Pod`] to guarantee safe bitwise transfer between
-/// CPU and GPU address spaces. Mutable CPU access is blocked while the
-/// buffer is in-flight on the GPU via [`GpuGuard`].
 pub struct UnifiedBuffer<T: Pod> {
     raw: Retained<ProtocolObject<dyn MTLBuffer>>,
     count: usize,
@@ -54,25 +50,18 @@ impl<T: Pod> UnifiedBuffer<T> {
         mem::size_of::<T>() * self.count
     }
 
-    /// Returns a reference to the underlying `MTLBuffer` for encoder binding.
+    /// Returns the underlying `MTLBuffer`.
     pub fn metal_buffer(&self) -> &ProtocolObject<dyn MTLBuffer> {
         &self.raw
     }
 
-    /// Returns a read-only slice of the buffer contents.
-    ///
-    /// Safe to call while in-flight, though data may be stale if the
-    /// GPU is actively writing.
+    /// Returns a read-only slice. Data may be stale if GPU is writing.
     pub fn as_slice(&self) -> &[T] {
         let ptr = self.raw.contents().as_ptr() as *const T;
         unsafe { std::slice::from_raw_parts(ptr, self.count) }
     }
 
-    /// Returns a mutable slice of the buffer contents.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the buffer is currently in-flight on the GPU.
+    /// Returns a mutable slice. Panics if in-flight.
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         assert!(
             !self.in_flight.load(Ordering::Acquire),
@@ -82,11 +71,7 @@ impl<T: Pod> UnifiedBuffer<T> {
         unsafe { std::slice::from_raw_parts_mut(ptr, self.count) }
     }
 
-    /// Copies `data` into the buffer.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `data.len() > self.count()` or if the buffer is in-flight.
+    /// Copies `data` into the buffer. Panics if data exceeds capacity or buffer is in-flight.
     pub fn write(&mut self, data: &[T]) {
         assert!(data.len() <= self.count, "Data exceeds buffer capacity");
         self.as_mut_slice()[..data.len()].copy_from_slice(data);
@@ -97,8 +82,7 @@ impl<T: Pod> UnifiedBuffer<T> {
         self.as_slice().to_vec()
     }
 
-    /// Marks this buffer as in-flight and returns a [`GpuGuard`] that
-    /// clears the flag on drop.
+    /// Marks as in-flight; returns a [`GpuGuard`] that clears on drop.
     pub fn gpu_guard(&self) -> GpuGuard<T> {
         self.in_flight.store(true, Ordering::Release);
         GpuGuard {
@@ -113,15 +97,25 @@ impl<T: Pod> UnifiedBuffer<T> {
     }
 }
 
-/// RAII guard that blocks mutable CPU access to a [`UnifiedBuffer`]
-/// until dropped.
+// SAFETY: MTLBuffer with StorageModeShared is safe to send between threads.
+// The underlying Metal allocation uses atomic reference counting.
+unsafe impl<T: Pod + Send> Send for UnifiedBuffer<T> {}
+// SAFETY: Read-only access (as_slice) is safe from multiple threads.
+// Mutable access is guarded by the in_flight flag.
+unsafe impl<T: Pod + Sync> Sync for UnifiedBuffer<T> {}
+
+/// RAII guard that blocks mutable CPU access until dropped.
 pub struct GpuGuard<T: Pod> {
     in_flight: Arc<AtomicBool>,
     _marker: PhantomData<T>,
 }
 
+// SAFETY: GpuGuard only holds an Arc<AtomicBool> — safe across threads.
+unsafe impl<T: Pod + Send> Send for GpuGuard<T> {}
+unsafe impl<T: Pod + Sync> Sync for GpuGuard<T> {}
+
 impl<T: Pod> GpuGuard<T> {
-    /// Explicitly releases the guard. Equivalent to `drop(guard)`.
+    /// Explicitly releases the guard.
     pub fn release(self) {
         // Drop impl handles it
     }

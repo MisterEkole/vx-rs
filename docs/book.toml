@@ -1,0 +1,12 @@
+[book]
+title = "VX Documentation"
+authors = ["Mitterrand Ekole"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "navy"
+git-repository-url = "https://github.com/MisterEkole/vx-rs"

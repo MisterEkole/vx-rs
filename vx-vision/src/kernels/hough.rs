@@ -1,4 +1,7 @@
 //! Hough line transform.
+//!
+//! No `encode()` method is provided because Hough requires a CPU readback
+//! of the accumulator buffer to extract peak lines after the voting pass.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -13,11 +16,13 @@ use objc2_metal::{
 };
 
 use crate::context::Context;
+use crate::error::{Error, Result};
 use crate::texture::Texture;
 use crate::types::{HoughVoteParams, HoughPeakParams, HoughLine};
 
 /// Configuration for Hough line detection.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct HoughConfig {
     /// Angle bins over [0, pi). Typically 180.
     pub n_theta: u32,
@@ -43,68 +48,64 @@ impl Default for HoughConfig {
     }
 }
 
-/// Hough line detection compute pipelines.
+/// Hough line detection pipelines. Requires CPU readback between passes.
 pub struct HoughLines {
     vote_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     peak_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl HoughLines {
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    pub fn new(ctx: &Context) -> Result<Self> {
         let vote_name = objc2_foundation::ns_string!("hough_vote");
         let peak_name = objc2_foundation::ns_string!("hough_peaks");
 
         let vote_func = ctx.library().newFunctionWithName(vote_name)
-            .ok_or_else(|| "Missing kernel function 'hough_vote'".to_string())?;
+            .ok_or(Error::ShaderMissing("hough_vote".into()))?;
         let peak_func = ctx.library().newFunctionWithName(peak_name)
-            .ok_or_else(|| "Missing kernel function 'hough_peaks'".to_string())?;
+            .ok_or(Error::ShaderMissing("hough_peaks".into()))?;
 
         let vote_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&vote_func)
-            .map_err(|e| format!("Failed to create hough_vote pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("hough_vote: {e}")))?;
         let peak_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&peak_func)
-            .map_err(|e| format!("Failed to create hough_peaks pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("hough_peaks: {e}")))?;
 
         Ok(Self { vote_pipeline, peak_pipeline })
     }
 
     /// Detects lines in an edge image via the Hough transform.
-    ///
-    /// `edge_image` is an R8Unorm texture where bright pixels are edges.
     pub fn detect(
         &self,
         ctx:        &Context,
         edge_image: &Texture,
         config:     &HoughConfig,
-    ) -> Result<Vec<HoughLine>, String> {
+    ) -> Result<Vec<HoughLine>> {
         let w = edge_image.width();
         let h = edge_image.height();
         let rho_max = ((w * w + h * h) as f32).sqrt();
         let n_rho = (2.0 * rho_max).ceil() as u32;
 
-        // Zero-initialized accumulator
         let acc_size = (config.n_theta as usize) * (n_rho as usize);
         let mut acc_buf = vx_gpu::UnifiedBuffer::<u32>::new(ctx.device(), acc_size)?;
         for v in acc_buf.as_mut_slice().iter_mut() {
             *v = 0;
         }
 
-        // Pass 1: accumulate votes
         {
             let vote_params = HoughVoteParams {
                 width:          w,
                 height:         h,
                 n_theta:        config.n_theta,
-                n_rho:          n_rho,
+                n_rho,
                 rho_max,
                 edge_threshold: config.edge_threshold,
             };
 
             let cmd_buf = ctx.queue().commandBuffer()
-                .ok_or("Failed to create command buffer")?;
+                .ok_or(Error::Gpu("failed to create command buffer".into()))?;
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create compute encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
             unsafe {
                 encoder.setComputePipelineState(&self.vote_pipeline);
@@ -129,7 +130,6 @@ impl HoughLines {
             cmd_buf.waitUntilCompleted();
         }
 
-        // Pass 2: extract peaks with NMS
         let line_buf = vx_gpu::UnifiedBuffer::<HoughLine>::new(ctx.device(), config.max_lines as usize)?;
         let mut count_buf = vx_gpu::UnifiedBuffer::<u32>::new(ctx.device(), 1)?;
         count_buf.as_mut_slice()[0] = 0;
@@ -137,7 +137,7 @@ impl HoughLines {
         {
             let peak_params = HoughPeakParams {
                 n_theta:        config.n_theta,
-                n_rho:          n_rho,
+                n_rho,
                 vote_threshold: config.vote_threshold,
                 max_lines:      config.max_lines,
                 rho_max,
@@ -145,9 +145,9 @@ impl HoughLines {
             };
 
             let cmd_buf = ctx.queue().commandBuffer()
-                .ok_or("Failed to create command buffer")?;
+                .ok_or(Error::Gpu("failed to create command buffer".into()))?;
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create compute encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
             unsafe {
                 encoder.setComputePipelineState(&self.peak_pipeline);
@@ -178,3 +178,6 @@ impl HoughLines {
         Ok(line_buf.as_slice()[..n_lines].to_vec())
     }
 }
+
+unsafe impl Send for HoughLines {}
+unsafe impl Sync for HoughLines {}

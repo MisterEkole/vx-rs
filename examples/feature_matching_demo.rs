@@ -1,11 +1,9 @@
 // examples/feature_matching_demo.rs
 //
-// End-to-end feature matching demo using multiple approaches:
-//   1. ORB (FAST + Harris + ORB descriptor + brute-force Hamming matcher)
-//   2. SIFT-like (DoG keypoints + 128-dim descriptors + L2 matcher)
+// Feature matching using three approaches:
+//   1. ORB (FAST + Harris + ORB descriptor + brute-force Hamming)
+//   2. SIFT-like (DoG keypoints + 128-dim descriptors + L2)
 //   3. Template matching (NCC)
-//
-// Demonstrates detecting features in two images and matching them.
 //
 // Run with:
 //   cargo run --release --example feature_matching_demo -- image1.png image2.png
@@ -21,8 +19,7 @@ use vx_vision::kernels::matcher::{BruteMatcher, MatchConfig};
 use vx_vision::kernels::sift::{SiftPipeline, SiftConfig};
 use vx_vision::kernels::template_match::TemplateMatcher;
 
-/// Standard ORB test pattern (256 pairs × 4 offsets = 1024 values).
-/// Learned pattern from OpenCV's ORB implementation.
+/// Standard ORB test pattern (256 pairs x 4 offsets = 1024 values).
 fn orb_pattern() -> Vec<i32> {
     let mut pattern = Vec::with_capacity(1024);
     let mut rng: u32 = 0xDEADBEEF;
@@ -43,7 +40,6 @@ fn main() {
         std::process::exit(1);
     }
 
-    // ── Load images ──
     let img1 = image::open(&args[1]).expect("Failed to open image1").to_luma8();
     let img2 = image::open(&args[2]).expect("Failed to open image2").to_luma8();
     let (w1, h1) = img1.dimensions();
@@ -51,7 +47,6 @@ fn main() {
     println!("Image 1: {}x{} ({})", w1, h1, &args[1]);
     println!("Image 2: {}x{} ({})\n", w2, h2, &args[2]);
 
-    // ── GPU setup ──
     let t0 = Instant::now();
     let ctx = Context::new().expect("No Metal GPU");
     let fast = FastDetector::new(&ctx).expect("FAST pipeline");
@@ -66,18 +61,15 @@ fn main() {
     let tex1 = ctx.texture_gray8(img1.as_raw(), w1, h1).expect("texture1");
     let tex2 = ctx.texture_gray8(img2.as_raw(), w2, h2).expect("texture2");
 
-    // ════════════════════════════════════════════════════════════════
-    // Method 1: ORB pipeline
-    // ════════════════════════════════════════════════════════════════
-    println!("═══ ORB Pipeline ═══");
+    // ORB pipeline
+    println!("=== ORB Pipeline ===");
 
     let pattern = orb_pattern();
     let t_orb = Instant::now();
 
-    // Detect + describe image 1
-    let fast_cfg = FastDetectConfig { threshold: 20, max_corners: 4096 };
-    let harris_cfg = HarrisConfig { patch_radius: 3, k: 0.04 };
-    let nms_cfg = NmsConfig { min_distance: 8.0 };
+    let fast_cfg = FastDetectConfig::new(20, 4096);
+    let harris_cfg = HarrisConfig::new(0.04, 3);
+    let nms_cfg = NmsConfig::new(8.0);
 
     let corners1 = fast.detect(&ctx, &tex1, &fast_cfg).expect("FAST1").corners;
     let scored1 = harris.compute(&ctx, &tex1, &corners1, &harris_cfg).expect("Harris1");
@@ -93,14 +85,16 @@ fn main() {
 
     let orb_detect_ms = t_orb.elapsed().as_secs_f64() * 1000.0;
 
-    // Extract flat descriptor arrays for matching
     let flat1: Vec<u32> = desc1.descriptors.iter().flat_map(|d| d.desc).collect();
     let flat2: Vec<u32> = desc2.descriptors.iter().flat_map(|d| d.desc).collect();
 
     let t_match = Instant::now();
+    let mut match_cfg = MatchConfig::default();
+    match_cfg.max_hamming = 64;
+    match_cfg.ratio_thresh = 0.75;
     let orb_matches = brute.match_descriptors(
         &ctx, &flat1, &flat2,
-        &MatchConfig { max_hamming: 64, ratio_thresh: 0.75 },
+        &match_cfg,
     ).expect("Matching");
     let orb_match_ms = t_match.elapsed().as_secs_f64() * 1000.0;
 
@@ -114,27 +108,22 @@ fn main() {
         println!("  Avg Hamming: {:.1}", avg_dist);
         println!("  Avg ratio:   {:.3}", avg_ratio);
 
-        // Show first 5 matches
         for (i, m) in orb_matches.iter().take(5).enumerate() {
             let p1 = kp1[m.query_idx as usize].position;
             let p2 = kp2[m.train_idx as usize].position;
-            println!("    [{:2}] ({:.0},{:.0}) → ({:.0},{:.0}) dist={} ratio={:.3}",
+            println!("    [{:2}] ({:.0},{:.0}) -> ({:.0},{:.0}) dist={} ratio={:.3}",
                 i, p1[0], p1[1], p2[0], p2[1], m.distance, m.ratio);
         }
     }
 
-    // ════════════════════════════════════════════════════════════════
-    // Method 2: SIFT-like pipeline
-    // ════════════════════════════════════════════════════════════════
-    println!("\n═══ SIFT-like Pipeline ═══");
+    // SIFT-like pipeline
+    println!("\n=== SIFT-like Pipeline ===");
 
-    let sift_cfg = SiftConfig {
-        n_octaves: 3,
-        n_levels: 3,
-        contrast_threshold: 0.04,
-        max_keypoints: 1024,
-        ..SiftConfig::default()
-    };
+    let mut sift_cfg = SiftConfig::default();
+    sift_cfg.n_octaves = 3;
+    sift_cfg.n_levels = 3;
+    sift_cfg.contrast_threshold = 0.04;
+    sift_cfg.max_keypoints = 1024;
 
     let t_sift = Instant::now();
     let feat1 = sift.detect_and_describe(&ctx, &tex1, &sift_cfg).expect("SIFT1");
@@ -155,19 +144,16 @@ fn main() {
         for (i, m) in sift_matches.iter().take(5).enumerate() {
             let q = &feat1[m.query_idx];
             let t = &feat2[m.train_idx];
-            println!("    [{:2}] ({:.0},{:.0}) → ({:.0},{:.0}) dist={:.4} ratio={:.3}",
+            println!("    [{:2}] ({:.0},{:.0}) -> ({:.0},{:.0}) dist={:.4} ratio={:.3}",
                 i, q.x, q.y, t.x, t.y, m.distance, m.ratio);
         }
     }
 
-    // ════════════════════════════════════════════════════════════════
-    // Method 3: Template matching (extract patch from img1, find in img2)
-    // ════════════════════════════════════════════════════════════════
-    println!("\n═══ Template Matching ═══");
+    // Template matching (extract patch from img1, find in img2)
+    println!("\n=== Template Matching ===");
 
     let patch_size = 64u32;
     if w1 >= patch_size && h1 >= patch_size && w2 >= patch_size && h2 >= patch_size {
-        // Extract center patch from image 1
         let cx = (w1 / 2 - patch_size / 2) as usize;
         let cy = (h1 / 2 - patch_size / 2) as usize;
         let mut patch = vec![0u8; (patch_size * patch_size) as usize];
@@ -190,8 +176,8 @@ fn main() {
         println!("  (Images too small for {}x{} template)", patch_size, patch_size);
     }
 
-    // ── Summary ──
-    println!("\n─── Summary ─────────────────────────────");
+    // Summary
+    println!("\n--- Summary ---");
     println!("ORB:   {} matches in {:.2} ms (detect+match)",
         orb_matches.len(), orb_detect_ms + orb_match_ms);
     println!("SIFT:  {} matches in {:.2} ms (detect+match)",

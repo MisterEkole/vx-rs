@@ -1,4 +1,7 @@
 //! RANSAC homography estimation with GPU-parallel scoring.
+//!
+//! No `encode()` method is provided because RANSAC iterates with CPU-side
+//! model selection between GPU scoring passes.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -14,10 +17,12 @@ use objc2_metal::{
 
 use vx_gpu::UnifiedBuffer;
 use crate::context::Context;
+use crate::error::{Error, Result};
 use crate::types::{HomographyParams, PointPair, ScoreResult};
 
 /// RANSAC configuration for homography estimation.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct RansacConfig {
     /// Maximum RANSAC iterations.
     pub max_iterations: u32,
@@ -52,19 +57,19 @@ pub struct HomographyResult {
     pub inlier_mask: Vec<bool>,
 }
 
-/// RANSAC homography estimator with GPU scoring.
+/// RANSAC homography estimator with GPU scoring. Requires CPU readback each iteration.
 pub struct HomographyEstimator {
     pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl HomographyEstimator {
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    pub fn new(ctx: &Context) -> Result<Self> {
         let name = objc2_foundation::ns_string!("homography_score");
         let func = ctx.library().newFunctionWithName(name)
-            .ok_or_else(|| "Missing kernel function 'homography_score'".to_string())?;
+            .ok_or(Error::ShaderMissing("homography_score".into()))?;
         let pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&func)
-            .map_err(|e| format!("Failed to create homography_score pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("homography_score: {e}")))?;
         Ok(Self { pipeline })
     }
 
@@ -74,13 +79,14 @@ impl HomographyEstimator {
         ctx:    &Context,
         pairs:  &[PointPair],
         config: &RansacConfig,
-    ) -> Result<HomographyResult, String> {
+    ) -> Result<HomographyResult> {
         let n = pairs.len();
         if n < 4 {
-            return Err("Need at least 4 point pairs for homography estimation".into());
+            return Err(Error::InvalidConfig(
+                "need at least 4 point pairs for homography estimation".into(),
+            ));
         }
 
-        // Upload point pairs
         let mut pairs_buf: UnifiedBuffer<PointPair> = UnifiedBuffer::new(ctx.device(), n)?;
         pairs_buf.write(pairs);
 
@@ -91,21 +97,17 @@ impl HomographyEstimator {
         let mut best_inliers = 0u32;
         let mut best_mask = vec![false; n];
 
-        // Deterministic LCG for sampling
         let mut rng_state: u64 = 0x12345678_9ABCDEF0;
 
         for _ in 0..config.max_iterations {
-            // Sample 4 random correspondences
             let indices = random_4(&mut rng_state, n);
 
-            // DLT solve
             let sample: Vec<PointPair> = indices.iter().map(|&i| pairs[i]).collect();
             let h = match dlt_homography(&sample) {
                 Some(h) => h,
                 None => continue,
             };
 
-            // GPU scoring
             count_buf.write(&[0u32]);
 
             let params = HomographyParams {
@@ -121,9 +123,9 @@ impl HomographyEstimator {
             let _count_guard   = count_buf.gpu_guard();
 
             let cmd_buf = ctx.queue().commandBuffer()
-                .ok_or("Failed to create command buffer")?;
+                .ok_or(Error::Gpu("failed to create command buffer".into()))?;
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create compute encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
             unsafe {
                 encoder.setComputePipelineState(&self.pipeline);
@@ -155,12 +157,10 @@ impl HomographyEstimator {
                 best_inliers = n_inliers;
                 best_h = h;
 
-                // Update inlier mask
                 for (i, result) in results_buf.as_slice()[..n].iter().enumerate() {
                     best_mask[i] = result.is_inlier != 0;
                 }
 
-                // Early exit when inlier ratio is high
                 if n_inliers as f32 > n as f32 * 0.9 {
                     break;
                 }
@@ -168,10 +168,10 @@ impl HomographyEstimator {
         }
 
         if best_inliers < config.min_inliers {
-            return Err(format!(
+            return Err(Error::InvalidConfig(format!(
                 "RANSAC failed: best model has {} inliers, need at least {}",
                 best_inliers, config.min_inliers
-            ));
+            )));
         }
 
         Ok(HomographyResult {
@@ -181,6 +181,9 @@ impl HomographyEstimator {
         })
     }
 }
+
+unsafe impl Send for HomographyEstimator {}
+unsafe impl Sync for HomographyEstimator {}
 
 /// Returns 4 unique indices in `[0, n)` via a simple LCG.
 fn random_4(state: &mut u64, n: usize) -> [usize; 4] {
@@ -201,7 +204,6 @@ fn random_4(state: &mut u64, n: usize) -> [usize; 4] {
 fn dlt_homography(pairs: &[PointPair]) -> Option<[f32; 9]> {
     assert!(pairs.len() >= 4);
 
-    // Build the 8x9 constraint matrix
     let mut a = [[0.0f64; 9]; 8];
 
     for (i, p) in pairs.iter().take(4).enumerate() {
@@ -212,7 +214,6 @@ fn dlt_homography(pairs: &[PointPair]) -> Option<[f32; 9]> {
         a[2*i+1] = [0.0, 0.0, 0.0, -x, -y, -1.0, yp*x, yp*y, yp];
     }
 
-    // Reduce to 8x8 by setting h[8] = 1
     let mut m = [[0.0f64; 8]; 8];
     let mut b = [0.0f64; 8];
 
@@ -223,7 +224,6 @@ fn dlt_homography(pairs: &[PointPair]) -> Option<[f32; 9]> {
         b[i] = -a[i][8];
     }
 
-    // Solve via Gaussian elimination
     let h8 = gauss_solve_8x8(&mut m, &mut b)?;
 
     let mut h = [0.0f32; 9];
@@ -232,7 +232,6 @@ fn dlt_homography(pairs: &[PointPair]) -> Option<[f32; 9]> {
     }
     h[8] = 1.0;
 
-    // Normalize
     let norm: f32 = h.iter().map(|x| x * x).sum::<f32>().sqrt();
     if norm < 1e-10 { return None; }
     for v in &mut h { *v /= norm; }
@@ -241,9 +240,9 @@ fn dlt_homography(pairs: &[PointPair]) -> Option<[f32; 9]> {
 }
 
 /// Solves an 8x8 system via Gaussian elimination with partial pivoting.
+#[allow(clippy::needless_range_loop)]
 fn gauss_solve_8x8(m: &mut [[f64; 8]; 8], b: &mut [f64; 8]) -> Option<[f64; 8]> {
     for col in 0..8 {
-        // Partial pivoting
         let mut max_row = col;
         let mut max_val = m[col][col].abs();
         for row in (col + 1)..8 {
@@ -254,24 +253,22 @@ fn gauss_solve_8x8(m: &mut [[f64; 8]; 8], b: &mut [f64; 8]) -> Option<[f64; 8]> 
         }
         if max_val < 1e-12 { return None; }
 
-        // Row swap
         if max_row != col {
             m.swap(col, max_row);
             b.swap(col, max_row);
         }
 
-        // Forward elimination
         let pivot = m[col][col];
         for row in (col + 1)..8 {
             let factor = m[row][col] / pivot;
-            for j in col..8 {
-                m[row][j] -= factor * m[col][j];
+            let (top, bot) = m.split_at_mut(row);
+            for (mrow_j, mcol_j) in bot[0][col..8].iter_mut().zip(top[col][col..8].iter()) {
+                *mrow_j -= factor * *mcol_j;
             }
             b[row] -= factor * b[col];
         }
     }
 
-    // Back-substitution
     let mut x = [0.0f64; 8];
     for col in (0..8).rev() {
         let mut sum = b[col];

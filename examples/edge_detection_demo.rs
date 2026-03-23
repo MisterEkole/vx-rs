@@ -1,9 +1,7 @@
 // examples/edge_detection_demo.rs
 //
-// Full edge detection pipeline demo:
-//   Sobel gradients → Canny edges → Morphological cleanup
-//
-// Also demonstrates histogram equalization as a preprocessing step.
+// Full edge detection pipeline:
+//   Histogram EQ -> Sobel gradients -> Canny edges -> Morphological cleanup
 //
 // Run with:
 //   cargo run --release --example edge_detection_demo -- path/to/image.png
@@ -21,14 +19,12 @@ fn main() {
         .nth(1)
         .expect("Usage: edge_detection_demo <image_path>");
 
-    // ── Load image ──
     let img = image::open(&path)
         .expect("Failed to open image")
         .to_luma8();
     let (w, h) = img.dimensions();
     println!("Image: {}x{} ({})", w, h, path);
 
-    // ── GPU setup ──
     let t0 = Instant::now();
     let ctx = Context::new().expect("No Metal GPU available");
     let sobel = SobelFilter::new(&ctx).expect("Sobel pipeline");
@@ -40,7 +36,7 @@ fn main() {
     let texture = ctx.texture_gray8(img.as_raw(), w, h)
         .expect("Failed to create texture");
 
-    // ── Step 1: Histogram analysis ──
+    // Histogram analysis
     let t1 = Instant::now();
     let bins = hist.compute(&ctx, &texture).expect("Histogram failed");
     let hist_ms = t1.elapsed().as_secs_f64() * 1000.0;
@@ -55,19 +51,18 @@ fn main() {
     println!("  Mean intensity: {:.1} / 255", mean_intensity);
     println!("  Active bins:    {} / 256", nonzero_bins);
 
-    // ── Step 2: Histogram equalization ──
+    // Histogram equalization
     let t2 = Instant::now();
     let equalized = ctx.texture_output_gray8(w, h).expect("output texture");
     hist.equalize(&ctx, &texture, &equalized).expect("Equalization failed");
     let eq_ms = t2.elapsed().as_secs_f64() * 1000.0;
     println!("Equalization:     {:.2} ms", eq_ms);
 
-    // ── Step 3: Sobel gradients ──
+    // Sobel gradients
     let t3 = Instant::now();
     let sobel_result = sobel.compute(&ctx, &equalized).expect("Sobel failed");
     let sobel_ms = t3.elapsed().as_secs_f64() * 1000.0;
 
-    // Read back magnitude stats
     let mag_data = sobel_result.magnitude.read_r32float();
     let max_mag = mag_data.iter().cloned().fold(0.0f32, f32::max);
     let avg_mag = mag_data.iter().sum::<f32>() / mag_data.len() as f32;
@@ -76,14 +71,13 @@ fn main() {
     println!("  Max magnitude:  {:.4}", max_mag);
     println!("  Avg magnitude:  {:.4}", avg_mag);
 
-    // ── Step 4: Canny edge detection ──
+    // Canny edge detection
     let t4 = Instant::now();
-    let canny_config = CannyConfig {
-        low_threshold:  0.04,
-        high_threshold: 0.12,
-        blur_sigma:     1.4,
-        blur_radius:    4,
-    };
+    let mut canny_config = CannyConfig::default();
+    canny_config.low_threshold = 0.04;
+    canny_config.high_threshold = 0.12;
+    canny_config.blur_sigma = 1.4;
+    canny_config.blur_radius = 4;
     let edges = canny.detect(&ctx, &texture, &canny_config)
         .expect("Canny failed");
     let canny_ms = t4.elapsed().as_secs_f64() * 1000.0;
@@ -95,10 +89,10 @@ fn main() {
     println!("Canny edges:      {:.2} ms", canny_ms);
     println!("  Edge pixels:    {} ({:.1}%)", edge_count, edge_pct);
 
-    // ── Step 5: Morphological cleanup (close small gaps in edges) ──
+    // Morphological cleanup (close small gaps in edges)
     let t5 = Instant::now();
     let closed = ctx.texture_output_gray8(w, h).expect("output texture");
-    morph.close(&ctx, &edges, &closed, &MorphConfig { radius_x: 1, radius_y: 1 })
+    morph.close(&ctx, &edges, &closed, &MorphConfig::new(1, 1))
         .expect("Morphological close failed");
     let morph_ms = t5.elapsed().as_secs_f64() * 1000.0;
 
@@ -108,7 +102,7 @@ fn main() {
     println!("Morph close:      {:.2} ms", morph_ms);
     println!("  Edge pixels:    {} (was {})", closed_edge_count, edge_count);
 
-    // ── Summary ──
+    // Summary
     let total = hist_ms + eq_ms + sobel_ms + canny_ms + morph_ms;
     println!("\nTotal pipeline:   {:.2} ms", total);
     println!("  Histogram + EQ: {:.2} ms", hist_ms + eq_ms);

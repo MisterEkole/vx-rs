@@ -14,10 +14,12 @@ use objc2_metal::{
 
 use vx_gpu::UnifiedBuffer;
 use crate::context::Context;
+use crate::error::{Error, Result};
 use crate::types::{CornerPoint, ORBOutput, StereoMatchResult, StereoParams};
 
 /// Configuration for the stereo feature matcher.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct StereoConfig {
     /// Epipolar y-tolerance in pixels.
     pub max_epipolar: f32,
@@ -67,7 +69,7 @@ impl Default for StereoConfig {
     }
 }
 
-/// Stereo matching compute pipelines. Create once, reuse across frames.
+/// Stereo matching compute pipelines.
 pub struct StereoMatcher {
     hamming_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     extract_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
@@ -81,30 +83,27 @@ pub struct StereoResult {
 }
 
 impl StereoMatcher {
-    /// Builds both compute pipelines from the context's shader library.
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    /// Compiles both stereo matching pipelines.
+    pub fn new(ctx: &Context) -> Result<Self> {
         let hamming_name = objc2_foundation::ns_string!("stereo_hamming");
         let extract_name = objc2_foundation::ns_string!("stereo_extract");
 
         let hamming_func = ctx.library().newFunctionWithName(hamming_name)
-            .ok_or_else(|| "Missing kernel function 'stereo_hamming'".to_string())?;
+            .ok_or(Error::ShaderMissing("stereo_hamming".into()))?;
         let extract_func = ctx.library().newFunctionWithName(extract_name)
-            .ok_or_else(|| "Missing kernel function 'stereo_extract'".to_string())?;
+            .ok_or(Error::ShaderMissing("stereo_extract".into()))?;
 
         let hamming_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&hamming_func)
-            .map_err(|e| format!("Failed to create stereo_hamming pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("stereo_hamming: {e}")))?;
         let extract_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&extract_func)
-            .map_err(|e| format!("Failed to create stereo_extract pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("stereo_extract: {e}")))?;
 
         Ok(Self { hamming_pipeline, extract_pipeline })
     }
 
     /// Matches ORB features between rectified left/right images.
-    ///
-    /// Descriptors from [`OrbDescriptor::compute`] are packed into GPU
-    /// buffers internally. Encodes both passes in one command buffer.
     pub fn run(
         &self,
         ctx: &Context,
@@ -113,7 +112,7 @@ impl StereoMatcher {
         left_descs:  &[ORBOutput],
         right_descs: &[ORBOutput],
         config: &StereoConfig,
-    ) -> Result<StereoResult, String> {
+    ) -> Result<StereoResult> {
         assert_eq!(left_kpts.len(),  left_descs.len(),  "left_kpts and left_descs length mismatch");
         assert_eq!(right_kpts.len(), right_descs.len(), "right_kpts and right_descs length mismatch");
 
@@ -124,7 +123,6 @@ impl StereoMatcher {
             return Ok(StereoResult { matches: Vec::new() });
         }
 
-        // Pack raw descriptor words (8 x u32 per keypoint, angle stripped)
         let left_words:  Vec<u32> = left_descs.iter().flat_map(|d| d.desc).collect();
         let right_words: Vec<u32> = right_descs.iter().flat_map(|d| d.desc).collect();
 
@@ -136,7 +134,6 @@ impl StereoMatcher {
             UnifiedBuffer::new(ctx.device(), right_words.len())?;
         right_desc_buf.write(&right_words);
 
-        // Keypoint buffers
         let mut left_kpt_buf: UnifiedBuffer<CornerPoint> =
             UnifiedBuffer::new(ctx.device(), n_left)?;
         left_kpt_buf.write(left_kpts);
@@ -145,11 +142,9 @@ impl StereoMatcher {
             UnifiedBuffer::new(ctx.device(), n_right)?;
         right_kpt_buf.write(right_kpts);
 
-        // Distance matrix (n_left x n_right, u16)
         let dist_matrix: UnifiedBuffer<u16> =
             UnifiedBuffer::new(ctx.device(), n_left * n_right)?;
 
-        // Match output buffer
         let matches_buf: UnifiedBuffer<StereoMatchResult> =
             UnifiedBuffer::new(ctx.device(), n_left)?;
 
@@ -171,7 +166,6 @@ impl StereoMatcher {
             baseline:      config.baseline,
         };
 
-        // GPU lifetime guards
         let _ld = left_desc_buf.gpu_guard();
         let _rd = right_desc_buf.gpu_guard();
         let _lk = left_kpt_buf.gpu_guard();
@@ -180,14 +174,12 @@ impl StereoMatcher {
         let _mt = matches_buf.gpu_guard();
         let _ct = count_buf.gpu_guard();
 
-        // Encode both passes into a single command buffer
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
 
-        // Pass 1: Hamming distance matrix
         {
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create hamming encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
             Self::encode_hamming(
                 &self.hamming_pipeline, &encoder,
@@ -199,10 +191,9 @@ impl StereoMatcher {
             encoder.endEncoding();
         }
 
-        // Pass 2: extract best match per left keypoint and triangulate
         {
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create extract encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
             Self::encode_extract(
                 &self.extract_pipeline, &encoder,
@@ -218,13 +209,13 @@ impl StereoMatcher {
 
         drop((_ld, _rd, _lk, _rk, _dm, _mt, _ct));
 
-        // Readback
         let n_matches = (count_buf.as_slice()[0] as usize).min(n_left);
         let matches = matches_buf.as_slice()[..n_matches].to_vec();
 
         Ok(StereoResult { matches })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn encode_hamming(
         pipeline:    &ProtocolObject<dyn MTLComputePipelineState>,
         encoder:     &ProtocolObject<dyn MTLComputeCommandEncoder>,
@@ -261,6 +252,7 @@ impl StereoMatcher {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn encode_extract(
         pipeline:    &ProtocolObject<dyn MTLComputePipelineState>,
         encoder:     &ProtocolObject<dyn MTLComputeCommandEncoder>,
@@ -293,3 +285,6 @@ impl StereoMatcher {
         }
     }
 }
+
+unsafe impl Send for StereoMatcher {}
+unsafe impl Sync for StereoMatcher {}

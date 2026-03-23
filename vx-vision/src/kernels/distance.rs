@@ -13,11 +13,13 @@ use objc2_metal::{
 };
 
 use crate::context::Context;
+use crate::error::{Error, Result};
 use crate::texture::Texture;
 use crate::types::JFAParams;
 
 /// Configuration for the distance transform.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct DistanceConfig {
     /// Intensity threshold (0.0--1.0); pixels at or below are seeds.
     pub threshold: f32,
@@ -37,27 +39,27 @@ pub struct DistanceTransform {
 }
 
 impl DistanceTransform {
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    pub fn new(ctx: &Context) -> Result<Self> {
         let init_name = objc2_foundation::ns_string!("jfa_init");
         let step_name = objc2_foundation::ns_string!("jfa_step");
         let dist_name = objc2_foundation::ns_string!("jfa_distance");
 
         let init_func = ctx.library().newFunctionWithName(init_name)
-            .ok_or_else(|| "Missing kernel function 'jfa_init'".to_string())?;
+            .ok_or(Error::ShaderMissing("jfa_init".into()))?;
         let step_func = ctx.library().newFunctionWithName(step_name)
-            .ok_or_else(|| "Missing kernel function 'jfa_step'".to_string())?;
+            .ok_or(Error::ShaderMissing("jfa_step".into()))?;
         let dist_func = ctx.library().newFunctionWithName(dist_name)
-            .ok_or_else(|| "Missing kernel function 'jfa_distance'".to_string())?;
+            .ok_or(Error::ShaderMissing("jfa_distance".into()))?;
 
         let init_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&init_func)
-            .map_err(|e| format!("Failed to create jfa_init pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("jfa_init: {e}")))?;
         let step_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&step_func)
-            .map_err(|e| format!("Failed to create jfa_step pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("jfa_step: {e}")))?;
         let distance_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&dist_func)
-            .map_err(|e| format!("Failed to create jfa_distance pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("jfa_distance: {e}")))?;
 
         Ok(Self { init_pipeline, step_pipeline, distance_pipeline })
     }
@@ -68,25 +70,23 @@ impl DistanceTransform {
         ctx:    &Context,
         input:  &Texture,
         config: &DistanceConfig,
-    ) -> Result<Texture, String> {
+    ) -> Result<Texture> {
         let w = input.width();
         let h = input.height();
         let n_pixels = (w as usize) * (h as usize);
 
-        // Ping-pong seed buffers (uint2 per pixel)
         let seeds_a = vx_gpu::UnifiedBuffer::<[u32; 2]>::new(ctx.device(), n_pixels)?;
         let seeds_b = vx_gpu::UnifiedBuffer::<[u32; 2]>::new(ctx.device(), n_pixels)?;
 
-        // Initialize seeds
         {
             let params = JFAParams {
                 width: w, height: h, step_size: 0, threshold: config.threshold,
             };
 
             let cmd_buf = ctx.queue().commandBuffer()
-                .ok_or("Failed to create command buffer")?;
+                .ok_or(Error::Gpu("failed to create command buffer".into()))?;
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create compute encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
             unsafe {
                 encoder.setComputePipelineState(&self.init_pipeline);
@@ -111,10 +111,8 @@ impl DistanceTransform {
             cmd_buf.waitUntilCompleted();
         }
 
-        // JFA iterations: k = N/2, N/4, ..., 1
         let max_dim = w.max(h);
         let mut k = max_dim.next_power_of_two() as i32 / 2;
-        // Ping-pong between seed buffers
         let mut read_a = true;
 
         while k >= 1 {
@@ -129,9 +127,9 @@ impl DistanceTransform {
             };
 
             let cmd_buf = ctx.queue().commandBuffer()
-                .ok_or("Failed to create command buffer")?;
+                .ok_or(Error::Gpu("failed to create command buffer".into()))?;
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create compute encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
             unsafe {
                 encoder.setComputePipelineState(&self.step_pipeline);
@@ -159,7 +157,6 @@ impl DistanceTransform {
             k /= 2;
         }
 
-        // Convert seed map to Euclidean distances
         let output = Texture::output_r32float(ctx.device(), w, h)?;
 
         let final_seeds = if read_a {
@@ -173,9 +170,9 @@ impl DistanceTransform {
         };
 
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
         let encoder = cmd_buf.computeCommandEncoder()
-            .ok_or("Failed to create compute encoder")?;
+            .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         unsafe {
             encoder.setComputePipelineState(&self.distance_pipeline);
@@ -202,3 +199,6 @@ impl DistanceTransform {
         Ok(output)
     }
 }
+
+unsafe impl Send for DistanceTransform {}
+unsafe impl Sync for DistanceTransform {}

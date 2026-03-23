@@ -21,10 +21,7 @@ pub fn new_queue(
     device.newCommandQueue().ok_or_else(|| "Failed to create command queue".into())
 }
 
-/// Loads a Metal library from precompiled metallib bytes.
-///
-/// Writes `bytes` to a per-thread temp file, loads via `newLibraryWithURL:error:`,
-/// then removes the temp file. Typically used with `include_bytes!`.
+/// Loads a Metal library from precompiled metallib bytes via a temp file.
 pub fn load_library_from_bytes(
     device: &ProtocolObject<dyn MTLDevice>,
     bytes: &[u8],

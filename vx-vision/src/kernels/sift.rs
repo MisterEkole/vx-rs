@@ -1,6 +1,7 @@
 //! SIFT-like feature detection and description (GPU keypoints, CPU descriptors).
 
 use crate::context::Context;
+use crate::error::Result;
 use crate::texture::Texture;
 use crate::types::DoGKeypoint;
 use crate::kernels::gaussian::GaussianBlur;
@@ -23,6 +24,7 @@ pub struct SiftFeature {
 
 /// SIFT pipeline configuration.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct SiftConfig {
     /// Pyramid octaves. `0` selects automatically from image size.
     pub n_octaves: usize,
@@ -62,7 +64,7 @@ pub struct SiftPipeline {
 }
 
 impl SiftPipeline {
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    pub fn new(ctx: &Context) -> Result<Self> {
         let blur = GaussianBlur::new(ctx)?;
         let dog = DoGDetector::new(ctx)?;
         let pyramid = PyramidBuilder::new(ctx)?;
@@ -75,11 +77,10 @@ impl SiftPipeline {
         ctx:    &Context,
         input:  &Texture,
         config: &SiftConfig,
-    ) -> Result<Vec<SiftFeature>, String> {
+    ) -> Result<Vec<SiftFeature>> {
         let w = input.width();
         let h = input.height();
 
-        // Auto-select octave count from image dimensions
         let n_octaves = if config.n_octaves == 0 {
             let min_dim = w.min(h) as f64;
             (min_dim.log2() - 2.0).floor().max(1.0) as usize
@@ -89,18 +90,15 @@ impl SiftPipeline {
 
         let mut all_keypoints: Vec<(DoGKeypoint, usize)> = Vec::new();
 
-        // Build pyramid levels
         let pyramid_levels = self.pyramid.build(ctx, input, n_octaves.min(4))?;
 
-        // Detect keypoints at each octave
         let mut octave_inputs: Vec<&Texture> = Vec::with_capacity(n_octaves);
         octave_inputs.push(input);
         for level in &pyramid_levels {
             octave_inputs.push(level);
         }
 
-        for oct in 0..n_octaves.min(octave_inputs.len()) {
-            let oct_input = octave_inputs[oct];
+        for (oct, oct_input) in octave_inputs.iter().enumerate().take(n_octaves) {
 
             let dog_config = DoGConfig {
                 n_levels: config.n_levels + 1,
@@ -112,7 +110,6 @@ impl SiftPipeline {
 
             let keypoints = self.dog.detect(ctx, &self.blur, oct_input, &dog_config)?;
 
-            // Filter by contrast
             for kp in keypoints {
                 if kp.response.abs() >= config.contrast_threshold {
                     all_keypoints.push((kp, oct));
@@ -120,14 +117,11 @@ impl SiftPipeline {
             }
         }
 
-        // Keep strongest keypoints
         all_keypoints.sort_by(|a, b| b.0.response.abs().partial_cmp(&a.0.response.abs()).unwrap());
         all_keypoints.truncate(config.max_keypoints as usize);
 
-        // Read back image for CPU orientation and descriptor computation
         let img_data = input.read_gray8();
 
-        // Orientation assignment and descriptor extraction (CPU)
         let features: Vec<SiftFeature> = all_keypoints.iter()
             .filter_map(|(kp, octave)| {
                 let scale_factor = (1 << octave) as f32;
@@ -167,7 +161,7 @@ impl SiftPipeline {
         ctx:    &Context,
         input:  &Texture,
         config: &SiftConfig,
-    ) -> Result<Vec<DoGKeypoint>, String> {
+    ) -> Result<Vec<DoGKeypoint>> {
         let dog_config = DoGConfig {
             n_levels: config.n_levels + 1,
             base_sigma: config.base_sigma,
@@ -178,7 +172,12 @@ impl SiftPipeline {
 
         self.dog.detect(ctx, &self.blur, input, &dog_config)
     }
+}
 
+unsafe impl Send for SiftPipeline {}
+unsafe impl Sync for SiftPipeline {}
+
+impl SiftPipeline {
     /// Matches two feature sets using L2 distance with ratio test.
     pub fn match_features(
         query: &[SiftFeature],
@@ -253,14 +252,12 @@ fn compute_orientation(
             let angle = gy.atan2(gx); // -pi to pi
             let weight = (-(dx * dx + dy * dy) as f32 * inv_2s2).exp();
 
-            // Map angle to histogram bin
-            let deg = (angle.to_degrees() + 360.0) % 360.0;
+                    let deg = (angle.to_degrees() + 360.0) % 360.0;
             let bin = (deg / 10.0) as usize % 36;
             hist[bin] += mag * weight;
         }
     }
 
-    // Peak bin
     let mut max_val = 0.0f32;
     let mut max_bin = 0;
     for (i, &v) in hist.iter().enumerate() {
@@ -270,10 +267,10 @@ fn compute_orientation(
         }
     }
 
-    // Bin center in radians
     (max_bin as f32 * 10.0 + 5.0).to_radians()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_descriptor(
     img: &[u8], w: u32, h: u32,
     x: f32, y: f32, sigma: f32,
@@ -295,19 +292,16 @@ fn compute_descriptor(
                 continue;
             }
 
-            // Rotate relative to dominant orientation
             let rx =  (dx as f32) * cos_t + (dy as f32) * sin_t;
             let ry = -(dx as f32) * sin_t + (dy as f32) * cos_t;
 
-            // Spatial bin (0--3)
             let bx = (rx / bin_size + 2.0) as i32;
             let by = (ry / bin_size + 2.0) as i32;
 
-            if bx < 0 || bx >= 4 || by < 0 || by >= 4 {
+            if !(0..4).contains(&bx) || !(0..4).contains(&by) {
                 continue;
             }
 
-            // Gradient magnitude and orientation bin
             let gx = img[(py as usize) * (w as usize) + (px as usize + 1)] as f32
                    - img[(py as usize) * (w as usize) + (px as usize - 1)] as f32;
             let gy = img[((py + 1) as usize) * (w as usize) + px as usize] as f32
@@ -318,11 +312,9 @@ fn compute_descriptor(
             let deg = (angle.to_degrees() + 360.0) % 360.0;
             let obin = (deg / 45.0) as usize % 8;
 
-            // Gaussian spatial weighting
             let inv_2s2 = 1.0 / (2.0 * (radius * sigma * 0.5).powi(2));
             let weight = (-(dx * dx + dy * dy) as f32 * inv_2s2).exp();
 
-            // (by * 4 + bx) * 8 + obin
             let idx = (by as usize * 4 + bx as usize) * 8 + obin;
             if idx < 128 {
                 desc[idx] += mag * weight;
@@ -330,7 +322,6 @@ fn compute_descriptor(
         }
     }
 
-    // L2-normalize
     let mut norm = 0.0f32;
     for v in &desc {
         norm += v * v;
@@ -340,7 +331,6 @@ fn compute_descriptor(
         *v /= norm;
     }
 
-    // Clamp and renormalize for illumination invariance
     for v in &mut desc {
         if *v > 0.2 {
             *v = 0.2;

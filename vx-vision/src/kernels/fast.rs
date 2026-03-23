@@ -13,10 +13,12 @@ use objc2_metal::{
 
 use vx_gpu::UnifiedBuffer;
 use crate::context::Context;
+use crate::error::{Error, Result};
 use crate::texture::Texture;
 use crate::types::{CornerPoint, FASTParams};
 
 /// Configuration for the FAST corner detector.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct FastDetectConfig {
     /// Intensity difference threshold (0--255). Lower values yield more corners.
@@ -24,6 +26,13 @@ pub struct FastDetectConfig {
 
     /// Maximum number of corners the output buffer can hold.
     pub max_corners: u32,
+}
+
+impl FastDetectConfig {
+    /// Creates a config with the given threshold and max corners.
+    pub fn new(threshold: i32, max_corners: u32) -> Self {
+        Self { threshold, max_corners }
+    }
 }
 
 impl Default for FastDetectConfig {
@@ -35,10 +44,13 @@ impl Default for FastDetectConfig {
     }
 }
 
-/// Compiled FAST-9 pipeline. Reusable across frames.
+/// Compiled FAST-9 pipeline.
 pub struct FastDetector {
     pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
+
+unsafe impl Send for FastDetector {}
+unsafe impl Sync for FastDetector {}
 
 /// Result of a single detection pass.
 #[derive(Debug)]
@@ -48,29 +60,26 @@ pub struct FastDetectResult {
 }
 
 impl FastDetector {
-    /// Creates the compute pipeline from the context's shader library.
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    /// Compiles the FAST-9 compute pipeline.
+    pub fn new(ctx: &Context) -> Result<Self> {
         let name = objc2_foundation::ns_string!("fast_detect");
 
         let func = ctx.library().newFunctionWithName(name)
-            .ok_or_else(|| "Missing kernel function 'fast_detect'".to_string())?;
+            .ok_or(Error::ShaderMissing("fast_detect".into()))?;
 
         let pipeline = ctx.device().newComputePipelineStateWithFunction_error(&func)
-            .map_err(|e| format!("Failed to create FAST pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("fast_detect: {e}")))?;
 
         Ok(Self { pipeline })
     }
 
-    /// Runs the detector on a grayscale texture.
-    ///
-    /// Synchronous: encodes, commits, waits, then reads back results.
-    /// For pipelined usage, see [`Self::encode`].
+    /// Detects corners in a grayscale texture. Synchronous.
     pub fn detect(
         &self,
         ctx: &Context,
         texture: &Texture,
         config: &FastDetectConfig,
-    ) -> Result<FastDetectResult, String> {
+    ) -> Result<FastDetectResult> {
         let width = texture.width();
         let height = texture.height();
 
@@ -91,10 +100,10 @@ impl FastDetector {
         let _count_guard = count_buf.gpu_guard();
 
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
 
         let encoder = cmd_buf.computeCommandEncoder()
-            .ok_or("Failed to create compute encoder")?;
+            .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         Self::encode_into(
             &self.pipeline, &encoder, texture,
@@ -117,17 +126,14 @@ impl FastDetector {
         Ok(FastDetectResult { corners })
     }
 
-    /// Encodes FAST detection into an existing compute encoder without committing.
-    ///
-    /// Chain: FAST -> Harris -> NMS in a single command buffer.
-    /// Read results with [`Self::read_results`] after commit + wait.
+    /// Encodes FAST detection without committing. Read with [`Self::read_results`] after commit.
     pub fn encode(
         &self,
         ctx: &Context,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         texture: &Texture,
         config: &FastDetectConfig,
-    ) -> Result<EncodedBuffers, String> {
+    ) -> Result<EncodedBuffers> {
         let width = texture.width();
         let height = texture.height();
 
@@ -157,15 +163,14 @@ impl FastDetector {
         })
     }
 
-    /// Reads corners from buffers returned by [`Self::encode`].
-    ///
-    /// Only valid after the command buffer has completed.
+    /// Reads corners after the command buffer has completed.
     pub fn read_results(buffers: &EncodedBuffers) -> Vec<CornerPoint> {
         let n_detected = buffers.count.as_slice()[0];
         let n = (n_detected as usize).min(buffers.max_corners as usize);
         buffers.corners.as_slice()[..n].to_vec()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn encode_into(
         pipeline: &ProtocolObject<dyn MTLComputePipelineState>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
@@ -176,7 +181,6 @@ impl FastDetector {
         width: u32,
         height: u32,
     ) {
-        // SAFETY: setBytes requires a valid pointer; encoder ops interact with device state.
         unsafe {
             encoder.setComputePipelineState(pipeline);
             encoder.setTexture_atIndex(Some(texture.raw()), 0);
@@ -207,7 +211,7 @@ impl FastDetector {
     }
 }
 
-/// Buffers returned by [`FastDetector::encode`]. Keeps allocations alive until readback.
+/// Buffers returned by [`FastDetector::encode`]. Must outlive the command buffer.
 pub struct EncodedBuffers {
     pub corners: UnifiedBuffer<CornerPoint>,
     pub count: UnifiedBuffer<u32>,

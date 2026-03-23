@@ -1,4 +1,7 @@
 //! GPU histogram computation and equalization.
+//!
+//! No `encode()` method is provided because histogram requires a CPU readback
+//! of the 256-bin accumulation buffer between dispatch and any downstream use.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -14,31 +17,32 @@ use objc2_metal::{
 
 use vx_gpu::UnifiedBuffer;
 use crate::context::Context;
+use crate::error::{Error, Result};
 use crate::texture::Texture;
 use crate::types::HistogramParams;
 
-/// Compiled histogram pipelines.
+/// Compiled histogram pipelines. Requires CPU readback between passes.
 pub struct Histogram {
     compute_pipeline:  Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     equalize_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl Histogram {
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    pub fn new(ctx: &Context) -> Result<Self> {
         let comp_name = objc2_foundation::ns_string!("histogram_compute");
         let eq_name   = objc2_foundation::ns_string!("histogram_equalize");
 
         let comp_func = ctx.library().newFunctionWithName(comp_name)
-            .ok_or_else(|| "Missing kernel function 'histogram_compute'".to_string())?;
+            .ok_or(Error::ShaderMissing("histogram_compute".into()))?;
         let eq_func = ctx.library().newFunctionWithName(eq_name)
-            .ok_or_else(|| "Missing kernel function 'histogram_equalize'".to_string())?;
+            .ok_or(Error::ShaderMissing("histogram_equalize".into()))?;
 
         let compute_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&comp_func)
-            .map_err(|e| format!("Failed to create histogram_compute pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("histogram_compute: {e}")))?;
         let equalize_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&eq_func)
-            .map_err(|e| format!("Failed to create histogram_equalize pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("histogram_equalize: {e}")))?;
 
         Ok(Self { compute_pipeline, equalize_pipeline })
     }
@@ -48,7 +52,7 @@ impl Histogram {
         &self,
         ctx:   &Context,
         input: &Texture,
-    ) -> Result<[u32; 256], String> {
+    ) -> Result<[u32; 256]> {
         let w = input.width();
         let h = input.height();
         let params = HistogramParams { width: w, height: h };
@@ -59,9 +63,9 @@ impl Histogram {
         let _guard = bins_buf.gpu_guard();
 
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
         let encoder = cmd_buf.computeCommandEncoder()
-            .ok_or("Failed to create compute encoder")?;
+            .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         unsafe {
             encoder.setComputePipelineState(&self.compute_pipeline);
@@ -92,13 +96,13 @@ impl Histogram {
         Ok(result)
     }
 
-    /// Histogram equalization. Spreads intensity distribution uniformly.
+    /// Histogram equalization.
     pub fn equalize(
         &self,
         ctx:    &Context,
         input:  &Texture,
         output: &Texture,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         let w = input.width();
         let h = input.height();
         let total_pixels = (w as f32) * (h as f32);
@@ -121,9 +125,9 @@ impl Histogram {
         let params = HistogramParams { width: w, height: h };
 
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
         let encoder = cmd_buf.computeCommandEncoder()
-            .ok_or("Failed to create compute encoder")?;
+            .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         unsafe {
             encoder.setComputePipelineState(&self.equalize_pipeline);
@@ -152,3 +156,6 @@ impl Histogram {
         Ok(())
     }
 }
+
+unsafe impl Send for Histogram {}
+unsafe impl Sync for Histogram {}

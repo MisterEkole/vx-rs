@@ -13,6 +13,7 @@ use objc2_metal::{
 };
 
 use crate::context::Context;
+use crate::error::{Error, Result};
 use crate::texture::Texture;
 use crate::types::PyramidParams;
 
@@ -22,31 +23,29 @@ pub struct PyramidBuilder {
 }
 
 impl PyramidBuilder {
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    pub fn new(ctx: &Context) -> Result<Self> {
         let name = objc2_foundation::ns_string!("pyramid_downsample");
         let func = ctx.library().newFunctionWithName(name)
-            .ok_or_else(|| "Missing kernel function 'pyramid_downsample'".to_string())?;
+            .ok_or(Error::ShaderMissing("pyramid_downsample".into()))?;
         let pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&func)
-            .map_err(|e| format!("Failed to create pyramid pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("pyramid_downsample: {e}")))?;
         Ok(Self { pipeline })
     }
 
-    /// Builds `n_levels` pyramid levels (level 0 = input, not returned).
-    ///
-    /// Returns textures for levels `1..n_levels`, each half the prior resolution.
+    /// Builds `n_levels` pyramid levels. Returns levels `1..n_levels`.
     pub fn build(
         &self,
         ctx:      &Context,
         input:    &Texture,
         n_levels: usize,
-    ) -> Result<Vec<Texture>, String> {
+    ) -> Result<Vec<Texture>> {
         if n_levels <= 1 {
             return Ok(Vec::new());
         }
 
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
 
         let mut src_w = input.width();
         let mut src_h = input.height();
@@ -54,13 +53,13 @@ impl PyramidBuilder {
         let mut levels: Vec<Texture> = Vec::with_capacity(n_levels - 1);
 
         for _ in 1..n_levels {
-            let dst_w = (src_w + 1) / 2;
-            let dst_h = (src_h + 1) / 2;
+            let dst_w = src_w.div_ceil(2);
+            let dst_h = src_h.div_ceil(2);
 
             let output = Texture::output_gray8(ctx.device(), dst_w, dst_h)?;
 
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create compute encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
             let params = PyramidParams {
                 src_width:  src_w,
@@ -90,7 +89,7 @@ impl PyramidBuilder {
         ctx:    &Context,
         input:  &Texture,
         output: &Texture,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         let params = PyramidParams {
             src_width:  input.width(),
             src_height: input.height(),
@@ -99,9 +98,9 @@ impl PyramidBuilder {
         };
 
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
         let encoder = cmd_buf.computeCommandEncoder()
-            .ok_or("Failed to create compute encoder")?;
+            .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         Self::encode_pass(&self.pipeline, &encoder, input, output, &params, output.width(), output.height());
 
@@ -141,3 +140,6 @@ impl PyramidBuilder {
         }
     }
 }
+
+unsafe impl Send for PyramidBuilder {}
+unsafe impl Sync for PyramidBuilder {}

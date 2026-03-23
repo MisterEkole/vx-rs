@@ -1,14 +1,6 @@
-// Integration tests for GPU compute kernels.
-//
-// These tests exercise the full GPU pipeline: create textures, dispatch
-// Metal shaders, read back results. They require an Apple Silicon or
-// Metal-compatible GPU to run.
-//
-// Run with: cargo test -p vx-vision
-
 use vx_vision::Context;
 
-// ── Helper ──────────────────────────────────────────────────────────
+// Helper
 
 fn make_gradient_image(w: u32, h: u32) -> Vec<u8> {
     (0..(w * h)).map(|i| {
@@ -21,7 +13,7 @@ fn make_checkerboard(w: u32, h: u32, block: u32) -> Vec<u8> {
     (0..(w * h)).map(|i| {
         let x = (i % w) / block;
         let y = (i / w) / block;
-        if (x + y) % 2 == 0 { 255u8 } else { 0u8 }
+        if (x + y).is_multiple_of(2) { 255u8 } else { 0u8 }
     }).collect()
 }
 
@@ -33,7 +25,7 @@ fn make_black_image(w: u32, h: u32) -> Vec<u8> {
     vec![0u8; (w * h) as usize]
 }
 
-// ── Gaussian Blur ───────────────────────────────────────────────────
+// Gaussian Blur
 
 #[test]
 fn gaussian_blur_reduces_noise() {
@@ -42,20 +34,19 @@ fn gaussian_blur_reduces_noise() {
 
     let w = 64u32;
     let h = 64u32;
-    // Noisy image: alternating 0 and 255
     let noisy: Vec<u8> = (0..(w * h)).map(|i| if i % 2 == 0 { 255 } else { 0 }).collect();
     let input = ctx.texture_gray8(&noisy, w, h).unwrap();
     let output = ctx.texture_output_gray8(w, h).unwrap();
 
-    let cfg = vx_vision::kernels::gaussian::GaussianConfig { sigma: 2.0, radius: 6 };
+    let mut cfg = vx_vision::kernels::gaussian::GaussianConfig::default();
+    cfg.sigma = 2.0;
+    cfg.radius = 6;
     blur.apply(&ctx, &input, &output, &cfg).unwrap();
 
     let result = output.read_gray8();
-    // After blur, values should be closer to 128 (mean of 0 and 255)
     let mean: f64 = result.iter().map(|&v| v as f64).sum::<f64>() / result.len() as f64;
     assert!((mean - 127.5).abs() < 20.0, "Mean after blur: {}", mean);
 
-    // Variance should be significantly reduced
     let variance: f64 = result.iter().map(|&v| {
         let d = v as f64 - mean;
         d * d
@@ -67,7 +58,7 @@ fn gaussian_blur_reduces_noise() {
     assert!(variance < orig_variance * 0.5, "Blur didn't reduce variance enough: {} vs {}", variance, orig_variance);
 }
 
-// ── Sobel ───────────────────────────────────────────────────────────
+// Sobel
 
 #[test]
 fn sobel_detects_horizontal_gradient() {
@@ -85,18 +76,16 @@ fn sobel_detects_horizontal_gradient() {
     let gy = result.grad_y.read_r32float();
     let mag = result.magnitude.read_r32float();
 
-    // Horizontal gradient should be detected in grad_x
     let avg_gx: f32 = gx.iter().sum::<f32>() / gx.len() as f32;
     let avg_gy: f32 = gy.iter().map(|v| v.abs()).sum::<f32>() / gy.len() as f32;
 
     assert!(avg_gx.abs() > avg_gy, "Should detect horizontal gradient: gx={} gy={}", avg_gx, avg_gy);
 
-    // Magnitude should be > 0 for non-uniform image
     let max_mag = mag.iter().cloned().fold(0.0f32, f32::max);
     assert!(max_mag > 0.0, "Magnitude should be positive");
 }
 
-// ── FAST Corner Detection ───────────────────────────────────────────
+// FAST Corner Detection
 
 #[test]
 fn fast_detects_corners_in_checkerboard() {
@@ -105,9 +94,7 @@ fn fast_detects_corners_in_checkerboard() {
 
     let w = 64u32;
     let h = 64u32;
-    // Create a black image with a single bright rectangle. The edges
-    // of the rectangle create corners that FAST-9 can detect (the
-    // Bresenham circle of radius 3 straddles the bright/dark boundary).
+    // Bright rectangle on black: FAST-9's Bresenham circle straddles the edges.
     let mut pixels = vec![0u8; (w * h) as usize];
     for y in 16..48u32 {
         for x in 16..48u32 {
@@ -116,13 +103,9 @@ fn fast_detects_corners_in_checkerboard() {
     }
     let input = ctx.texture_gray8(&pixels, w, h).unwrap();
 
-    let cfg = vx_vision::kernels::fast::FastDetectConfig {
-        threshold: 20,
-        max_corners: 4096,
-    };
+    let cfg = vx_vision::kernels::fast::FastDetectConfig::new(20, 4096);
     let result = fast.detect(&ctx, &input, &cfg).unwrap();
 
-    // Rectangle edges should produce FAST corners
     assert!(!result.corners.is_empty(), "FAST should detect corners on rectangle edges (got 0)");
 }
 
@@ -136,15 +119,12 @@ fn fast_no_corners_in_uniform() {
     let pixels = make_white_image(w, h);
     let input = ctx.texture_gray8(&pixels, w, h).unwrap();
 
-    let cfg = vx_vision::kernels::fast::FastDetectConfig {
-        threshold: 20,
-        max_corners: 1024,
-    };
+    let cfg = vx_vision::kernels::fast::FastDetectConfig::new(20, 1024);
     let result = fast.detect(&ctx, &input, &cfg).unwrap();
     assert_eq!(result.corners.len(), 0, "Uniform image should have no corners");
 }
 
-// ── Histogram ───────────────────────────────────────────────────────
+// Histogram
 
 #[test]
 fn histogram_uniform_white() {
@@ -184,7 +164,6 @@ fn histogram_equalization_increases_range() {
 
     let w = 64u32;
     let h = 64u32;
-    // Low contrast image: values 100-150
     let pixels: Vec<u8> = (0..(w * h)).map(|i| 100 + (i % 51) as u8).collect();
     let input = ctx.texture_gray8(&pixels, w, h).unwrap();
     let output = ctx.texture_output_gray8(w, h).unwrap();
@@ -196,11 +175,10 @@ fn histogram_equalization_increases_range() {
     let max_val = *result.iter().max().unwrap();
     let range = max_val as i32 - min_val as i32;
 
-    // Equalized range should be much wider than original (50)
     assert!(range > 100, "Equalization should expand range: got {}", range);
 }
 
-// ── Threshold ───────────────────────────────────────────────────────
+// Threshold
 
 #[test]
 fn threshold_binary() {
@@ -228,20 +206,20 @@ fn threshold_otsu() {
 
     let w = 64u32;
     let h = 64u32;
-    // Bimodal image: half dark, half bright
+    // Bimodal distribution so Otsu has a clear split point
     let mut pixels = vec![0u8; (w * h) as usize];
-    for i in 0..(w * h / 2) as usize {
-        pixels[i] = 50;
+    for pixel in pixels.iter_mut().take((w * h / 2) as usize) {
+        *pixel = 50;
     }
-    for i in (w * h / 2) as usize..(w * h) as usize {
-        pixels[i] = 200;
+    for pixel in pixels.iter_mut().skip((w * h / 2) as usize) {
+        *pixel = 200;
     }
     let input = ctx.texture_gray8(&pixels, w, h).unwrap();
     let output = ctx.texture_output_gray8(w, h).unwrap();
 
     let otsu_val = thresh.otsu(&ctx, &input, &output).unwrap();
 
-    // Otsu threshold is normalized [0,1]; should be between the two modes (50/255 ≈ 0.196, 200/255 ≈ 0.784)
+    // Normalized [0,1]; should fall between modes 50/255 and 200/255
     assert!(otsu_val > 0.15 && otsu_val < 0.85,
         "Otsu threshold should be between modes: got {}", otsu_val);
 
@@ -251,7 +229,7 @@ fn threshold_otsu() {
     }
 }
 
-// ── Morphology ──────────────────────────────────────────────────────
+// Morphology
 
 #[test]
 fn morphology_erode_shrinks_white() {
@@ -260,7 +238,6 @@ fn morphology_erode_shrinks_white() {
 
     let w = 32u32;
     let h = 32u32;
-    // White square in center
     let mut pixels = vec![0u8; (w * h) as usize];
     for y in 8..24 {
         for x in 8..24 {
@@ -270,7 +247,7 @@ fn morphology_erode_shrinks_white() {
     let input = ctx.texture_gray8(&pixels, w, h).unwrap();
     let output = ctx.texture_output_gray8(w, h).unwrap();
 
-    let cfg = vx_vision::kernels::morphology::MorphConfig { radius_x: 1, radius_y: 1 };
+    let cfg = vx_vision::kernels::morphology::MorphConfig::new(1, 1);
     morph.erode(&ctx, &input, &output, &cfg).unwrap();
 
     let result = output.read_gray8();
@@ -286,13 +263,12 @@ fn morphology_dilate_grows_white() {
 
     let w = 32u32;
     let h = 32u32;
-    // Small white dot
     let mut pixels = vec![0u8; (w * h) as usize];
     pixels[16 * 32 + 16] = 255;
     let input = ctx.texture_gray8(&pixels, w, h).unwrap();
     let output = ctx.texture_output_gray8(w, h).unwrap();
 
-    let cfg = vx_vision::kernels::morphology::MorphConfig { radius_x: 2, radius_y: 2 };
+    let cfg = vx_vision::kernels::morphology::MorphConfig::new(2, 2);
     morph.dilate(&ctx, &input, &output, &cfg).unwrap();
 
     let result = output.read_gray8();
@@ -301,7 +277,7 @@ fn morphology_dilate_grows_white() {
     assert!(white_after > white_before, "Dilation should grow white region");
 }
 
-// ── Bilateral Filter ────────────────────────────────────────────────
+// Bilateral Filter
 
 #[test]
 fn bilateral_filter_preserves_edges() {
@@ -310,20 +286,16 @@ fn bilateral_filter_preserves_edges() {
 
     let w = 64u32;
     let h = 64u32;
-    // Sharp edge: left half black, right half white
     let pixels: Vec<u8> = (0..(w * h)).map(|i| {
         if (i % w) < w / 2 { 0 } else { 255 }
     }).collect();
     let input = ctx.texture_gray8(&pixels, w, h).unwrap();
     let output = ctx.texture_output_gray8(w, h).unwrap();
 
-    let cfg = vx_vision::kernels::bilateral::BilateralConfig {
-        radius: 5, sigma_spatial: 10.0, sigma_range: 0.05,
-    };
+    let cfg = vx_vision::kernels::bilateral::BilateralConfig::new(5, 10.0, 0.05);
     bilateral.apply(&ctx, &input, &output, &cfg).unwrap();
 
     let result = output.read_gray8();
-    // Edge should be preserved: pixels far from edge should stay near 0 or 255
     let left_mean: f64 = result.iter().take((w / 4) as usize)
         .map(|&v| v as f64).sum::<f64>() / (w / 4) as f64;
     let right_center = (w * h / 2 + w * 3 / 4) as usize;
@@ -332,7 +304,7 @@ fn bilateral_filter_preserves_edges() {
     assert!(right_val > 220.0, "Right side should stay bright: {}", right_val);
 }
 
-// ── Pyramid ─────────────────────────────────────────────────────────
+// Pyramid
 
 #[test]
 fn pyramid_builds_levels() {
@@ -344,7 +316,7 @@ fn pyramid_builds_levels() {
     let pixels = make_gradient_image(w, h);
     let input = ctx.texture_gray8(&pixels, w, h).unwrap();
 
-    // build(n_levels=4) produces 3 downsampled levels (excludes the input)
+    // n_levels=4 produces 3 downsampled levels (excludes input)
     let levels = pyr.build(&ctx, &input, 4).unwrap();
     assert_eq!(levels.len(), 3);
     assert_eq!(levels[0].width(), 64);
@@ -355,7 +327,7 @@ fn pyramid_builds_levels() {
     assert_eq!(levels[2].height(), 16);
 }
 
-// ── Resize ──────────────────────────────────────────────────────────
+// Resize
 
 #[test]
 fn resize_downscale() {
@@ -372,11 +344,10 @@ fn resize_downscale() {
 
     let result = output.read_gray8();
     assert_eq!(result.len(), 32 * 32);
-    // Should still have gradient characteristics
     assert!(result[0] < result[31], "Gradient should be preserved after resize");
 }
 
-// ── Connected Components ────────────────────────────────────────────
+// Connected Components
 
 #[test]
 fn ccl_separate_blobs() {
@@ -385,7 +356,6 @@ fn ccl_separate_blobs() {
 
     let w = 32u32;
     let h = 32u32;
-    // Two separate white squares
     let mut pixels = vec![0u8; (w * h) as usize];
     for y in 2..8 {
         for x in 2..8 {
@@ -399,10 +369,9 @@ fn ccl_separate_blobs() {
     }
     let input = ctx.texture_gray8(&pixels, w, h).unwrap();
 
-    let cfg = vx_vision::kernels::connected::CCLConfig {
-        threshold: 0.5,
-        max_iterations: 64,
-    };
+    let mut cfg = vx_vision::kernels::connected::CCLConfig::default();
+    cfg.threshold = 0.5;
+    cfg.max_iterations = 64;
     let result = ccl.label(&ctx, &input, &cfg).unwrap();
 
     assert_eq!(result.n_components, 2, "Should find 2 components, found {}", result.n_components);
@@ -425,7 +394,7 @@ fn ccl_uniform_black_no_components() {
     assert_eq!(result.n_components, 0, "Black image should have 0 components");
 }
 
-// ── Distance Transform ──────────────────────────────────────────────
+// Distance Transform
 
 #[test]
 fn distance_transform_single_seed() {
@@ -434,22 +403,20 @@ fn distance_transform_single_seed() {
 
     let w = 32u32;
     let h = 32u32;
-    // Single seed pixel in center
     let mut pixels = vec![255u8; (w * h) as usize];
-    pixels[16 * 32 + 16] = 0; // seed
+    pixels[16 * 32 + 16] = 0;
     let input = ctx.texture_gray8(&pixels, w, h).unwrap();
 
-    let cfg = vx_vision::kernels::distance::DistanceConfig { threshold: 0.5 };
+    let mut cfg = vx_vision::kernels::distance::DistanceConfig::default();
+    cfg.threshold = 0.5;
     let result = dt.compute(&ctx, &input, &cfg).unwrap();
 
     let distances = result.read_r32float();
-    // Distance at seed should be 0
     assert!((distances[16 * 32 + 16]) < 0.01, "Seed distance should be ~0");
-    // Distance at corner should be > 0
     assert!(distances[0] > 10.0, "Corner should be far from seed");
 }
 
-// ── Canny ───────────────────────────────────────────────────────────
+// Canny
 
 #[test]
 fn canny_detects_edges_in_checkerboard() {
@@ -461,12 +428,11 @@ fn canny_detects_edges_in_checkerboard() {
     let pixels = make_checkerboard(w, h, 16);
     let input = ctx.texture_gray8(&pixels, w, h).unwrap();
 
-    let cfg = vx_vision::kernels::canny::CannyConfig {
-        low_threshold: 0.04,
-        high_threshold: 0.12,
-        blur_sigma: 1.0,
-        blur_radius: 3,
-    };
+    let mut cfg = vx_vision::kernels::canny::CannyConfig::default();
+    cfg.low_threshold = 0.04;
+    cfg.high_threshold = 0.12;
+    cfg.blur_sigma = 1.0;
+    cfg.blur_radius = 3;
     let edges = canny.detect(&ctx, &input, &cfg).unwrap();
     let edge_data = edges.read_r32float();
     let edge_count = edge_data.iter().filter(|&&v| v > 0.5).count();
@@ -475,7 +441,7 @@ fn canny_detects_edges_in_checkerboard() {
     assert!(edge_count < (w * h) as usize / 2, "Too many edge pixels");
 }
 
-// ── Integral Image ──────────────────────────────────────────────────
+// Integral Image
 
 #[test]
 fn integral_image_sum() {
@@ -490,14 +456,14 @@ fn integral_image_sum() {
     let result = integral.compute(&ctx, &input).unwrap();
     let data = result.read_r32float();
 
-    // Bottom-right should be sum of all pixels = w*h * (255/255) = w*h
     let bottom_right = data[(h - 1) as usize * w as usize + (w - 1) as usize];
-    let expected = (w * h) as f32; // each pixel = 1.0 (normalized)
+    // Each pixel normalizes to 1.0, so sum = w*h
+    let expected = (w * h) as f32;
     assert!((bottom_right - expected).abs() < 1.0,
         "Bottom-right integral should be ~{}, got {}", expected, bottom_right);
 }
 
-// ── Hough Lines ─────────────────────────────────────────────────────
+// Hough Lines
 
 #[test]
 fn hough_detects_horizontal_line() {
@@ -506,24 +472,21 @@ fn hough_detects_horizontal_line() {
 
     let w = 64u32;
     let h = 64u32;
-    // Horizontal white line across middle
     let mut pixels = vec![0u8; (w * h) as usize];
     for x in 0..w as usize {
         pixels[32 * w as usize + x] = 255;
     }
     let input = ctx.texture_gray8(&pixels, w, h).unwrap();
 
-    let cfg = vx_vision::kernels::hough::HoughConfig {
-        n_theta: 180,
-        edge_threshold: 0.5,
-        vote_threshold: 30,
-        max_lines: 16,
-        nms_radius: 5,
-    };
+    let mut cfg = vx_vision::kernels::hough::HoughConfig::default();
+    cfg.n_theta = 180;
+    cfg.edge_threshold = 0.5;
+    cfg.vote_threshold = 30;
+    cfg.max_lines = 16;
+    cfg.nms_radius = 5;
     let lines = hough.detect(&ctx, &input, &cfg).unwrap();
 
     assert!(!lines.is_empty(), "Should detect at least one line");
-    // Horizontal line → theta ≈ 90° (π/2)
     let has_horizontal = lines.iter().any(|l| {
         let deg = l.theta.to_degrees();
         (deg - 90.0).abs() < 10.0
@@ -531,7 +494,7 @@ fn hough_detects_horizontal_line() {
     assert!(has_horizontal, "Should detect horizontal line near 90°");
 }
 
-// ── Template Match ──────────────────────────────────────────────────
+// Template Match
 
 #[test]
 fn template_match_finds_self() {
@@ -540,19 +503,17 @@ fn template_match_finds_self() {
 
     let w = 64u32;
     let h = 64u32;
-    // Create a gray image with a distinctive gradient patch at (20,20)
     let mut pixels = vec![128u8; (w * h) as usize];
     let pw = 8u32;
     let ph = 8u32;
+    // Gradient patch so NCC has non-zero variance
     for dy in 0..ph {
         for dx in 0..pw {
-            // Non-uniform patch: gradient pattern so NCC has non-zero variance
             pixels[((20 + dy) * w + (20 + dx)) as usize] = (dy * 32 + dx * 16) as u8;
         }
     }
     let image = ctx.texture_gray8(&pixels, w, h).unwrap();
 
-    // Template is the same gradient patch
     let mut patch = vec![0u8; (pw * ph) as usize];
     for dy in 0..ph {
         for dx in 0..pw {
@@ -563,21 +524,19 @@ fn template_match_finds_self() {
 
     let result = tm.match_template(&ctx, &image, &template).unwrap();
 
-    // Allow small offset tolerance for NCC edge effects
     let dx = (result.best_x as i32 - 20).unsigned_abs();
     let dy_off = (result.best_y as i32 - 20).unsigned_abs();
     assert!(dx <= 2 && dy_off <= 2,
         "Should find template near (20,20), got ({}, {})", result.best_x, result.best_y);
 }
 
-// ── Brute-Force Matcher ─────────────────────────────────────────────
+// Brute-Force Matcher
 
 #[test]
 fn matcher_identical_descriptors() {
     let ctx = Context::new().unwrap();
     let matcher = vx_vision::kernels::matcher::BruteMatcher::new(&ctx).unwrap();
 
-    // Two identical sets of 4 descriptors (8 u32s each)
     let desc: Vec<u32> = vec![
         0xAAAAAAAA, 0x55555555, 0x12345678, 0x9ABCDEF0,
         0x11111111, 0x22222222, 0x33333333, 0x44444444,
@@ -589,20 +548,18 @@ fn matcher_identical_descriptors() {
         0x99AABBCC, 0xDDEEFF00, 0x11111111, 0x22222222,
     ];
 
-    let cfg = vx_vision::kernels::matcher::MatchConfig {
-        max_hamming: 256,
-        ratio_thresh: 0.99,
-    };
+    let mut cfg = vx_vision::kernels::matcher::MatchConfig::default();
+    cfg.max_hamming = 256;
+    cfg.ratio_thresh = 0.99;
     let matches = matcher.match_descriptors(&ctx, &desc, &desc, &cfg).unwrap();
 
-    // Should find matches (identical descriptors → distance 0)
     assert!(!matches.is_empty(), "Should match identical descriptors");
     for m in &matches {
         assert_eq!(m.distance, 0, "Identical descriptors should have distance 0");
     }
 }
 
-// ── Pipeline ────────────────────────────────────────────────────────
+// Pipeline
 
 #[test]
 fn pipeline_commit_and_wait() {
@@ -616,10 +573,101 @@ fn pipeline_commit_and_wait() {
     let output = ctx.texture_output_gray8(w, h).unwrap();
 
     let pipe = vx_vision::Pipeline::begin(&ctx).unwrap();
-    let cfg = vx_vision::kernels::gaussian::GaussianConfig { sigma: 1.0, radius: 3 };
+    let mut cfg = vx_vision::kernels::gaussian::GaussianConfig::default();
+    cfg.sigma = 1.0;
+    cfg.radius = 3;
     let _state = blur.encode(&ctx, pipe.cmd_buf(), &input, &output, &cfg).unwrap();
     let _retained = pipe.commit_and_wait();
 
     let result = output.read_gray8();
     assert_eq!(result.len(), (w * h) as usize);
+}
+
+#[test]
+fn pipeline_five_kernel_chain() {
+    use vx_vision::kernels::gaussian::{GaussianBlur, GaussianConfig};
+    use vx_vision::kernels::bilateral::{BilateralFilter, BilateralConfig};
+    use vx_vision::kernels::morphology::{Morphology, MorphConfig};
+    use vx_vision::kernels::threshold::Threshold;
+
+    let ctx = Context::new().unwrap();
+    let gauss = GaussianBlur::new(&ctx).unwrap();
+    let bilateral = BilateralFilter::new(&ctx).unwrap();
+    let morph = Morphology::new(&ctx).unwrap();
+    let thresh = Threshold::new(&ctx).unwrap();
+
+    let w = 64u32;
+    let h = 64u32;
+    let pixels = make_gradient_image(w, h);
+    let input = ctx.texture_gray8(&pixels, w, h).unwrap();
+
+    let inter1 = ctx.texture_intermediate_gray8(w, h).unwrap();
+    let inter2 = ctx.texture_intermediate_gray8(w, h).unwrap();
+    let inter3 = ctx.texture_intermediate_gray8(w, h).unwrap();
+    let inter4 = ctx.texture_intermediate_gray8(w, h).unwrap();
+    let output = ctx.texture_output_gray8(w, h).unwrap();
+
+    let pipe = vx_vision::Pipeline::begin(&ctx).unwrap();
+    let cmd = pipe.cmd_buf();
+
+    let mut gauss_cfg = GaussianConfig::default();
+    gauss_cfg.sigma = 1.0;
+    gauss_cfg.radius = 2;
+    let _gauss_state = gauss.encode(&ctx, cmd, &input, &inter1, &gauss_cfg).unwrap();
+
+    let bilateral_cfg = BilateralConfig::default();
+    bilateral.encode(cmd, &inter1, &inter2, &bilateral_cfg).unwrap();
+
+    let morph_cfg = MorphConfig::default();
+    morph.encode_dilate(cmd, &inter2, &inter3, &morph_cfg).unwrap();
+
+    morph.encode_erode(cmd, &inter3, &inter4, &morph_cfg).unwrap();
+
+    thresh.encode_binary(cmd, &inter4, &output, 0.5, false).unwrap();
+
+    let _retained = pipe.commit_and_wait();
+
+    let result = output.read_gray8();
+    assert_eq!(result.len(), (w * h) as usize);
+    let nonzero = result.iter().filter(|&&v| v > 0).count();
+    assert!(nonzero > 0, "threshold output should have some white pixels");
+    assert!(nonzero < result.len(), "threshold output should have some black pixels");
+}
+
+// Multi-threaded dispatch
+
+#[test]
+fn multithreaded_dispatch() {
+    use std::sync::Arc;
+    use std::thread;
+    use vx_vision::kernels::pyramid::PyramidBuilder;
+    use vx_vision::kernels::fast::{FastDetector, FastDetectConfig};
+
+    let ctx = Arc::new(Context::new().unwrap());
+
+    let w = 64u32;
+    let h = 64u32;
+    let pixels = make_gradient_image(w, h);
+
+    let ctx1 = Arc::clone(&ctx);
+    let pixels1 = pixels.clone();
+    let t1 = thread::spawn(move || {
+        let input = ctx1.texture_gray8(&pixels1, w, h).unwrap();
+        let pyr = PyramidBuilder::new(&ctx1).unwrap();
+        let levels = pyr.build(&ctx1, &input, 3).unwrap();
+        assert!(levels.len() >= 2, "pyramid should produce multiple levels");
+    });
+
+    let ctx2 = Arc::clone(&ctx);
+    let pixels2 = pixels.clone();
+    let t2 = thread::spawn(move || {
+        let input = ctx2.texture_gray8(&pixels2, w, h).unwrap();
+        let det = FastDetector::new(&ctx2).unwrap();
+        let cfg = FastDetectConfig::default();
+        let result = det.detect(&ctx2, &input, &cfg).unwrap();
+        let _ = result;
+    });
+
+    t1.join().expect("pyramid thread panicked");
+    t2.join().expect("FAST thread panicked");
 }

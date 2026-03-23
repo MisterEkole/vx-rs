@@ -13,6 +13,7 @@ use objc2_metal::{
 };
 
 use crate::context::Context;
+use crate::error::{Error, Result};
 use crate::texture::Texture;
 use crate::types::TemplateParams;
 
@@ -33,38 +34,35 @@ pub struct TemplateMatcher {
 }
 
 impl TemplateMatcher {
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    pub fn new(ctx: &Context) -> Result<Self> {
         let name = objc2_foundation::ns_string!("template_match_ncc");
         let func = ctx.library().newFunctionWithName(name)
-            .ok_or_else(|| "Missing kernel function 'template_match_ncc'".to_string())?;
+            .ok_or(Error::ShaderMissing("template_match_ncc".into()))?;
         let pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&func)
-            .map_err(|e| format!("Failed to create template_match_ncc pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("template_match_ncc: {e}")))?;
         Ok(Self { pipeline })
     }
 
     /// Matches a template against a grayscale image using NCC.
-    ///
-    /// Returns the correlation map and best-match location/score.
     pub fn match_template(
         &self,
         ctx:      &Context,
         image:    &Texture,
         template: &Texture,
-    ) -> Result<TemplateMatchResult, String> {
+    ) -> Result<TemplateMatchResult> {
         let img_w = image.width();
         let img_h = image.height();
         let tpl_w = template.width();
         let tpl_h = template.height();
 
         if tpl_w > img_w || tpl_h > img_h {
-            return Err("Template is larger than image".to_string());
+            return Err(Error::InvalidConfig("template is larger than image".into()));
         }
 
         let out_w = img_w - tpl_w + 1;
         let out_h = img_h - tpl_h + 1;
 
-        // Precompute template statistics on CPU
         let tpl_pixels = template.read_gray8();
         let n = (tpl_w * tpl_h) as f32;
         let tpl_mean: f32 = tpl_pixels.iter().map(|&p| p as f32 / 255.0).sum::<f32>() / n;
@@ -88,9 +86,9 @@ impl TemplateMatcher {
         let result_tex = Texture::output_r32float(ctx.device(), out_w, out_h)?;
 
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
         let encoder = cmd_buf.computeCommandEncoder()
-            .ok_or("Failed to create compute encoder")?;
+            .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         unsafe {
             encoder.setComputePipelineState(&self.pipeline);
@@ -115,7 +113,6 @@ impl TemplateMatcher {
         cmd_buf.commit();
         cmd_buf.waitUntilCompleted();
 
-        // Scan correlation map for peak
         let corr_data = result_tex.read_r32float();
         let mut best_score = f32::NEG_INFINITY;
         let mut best_idx = 0usize;
@@ -136,3 +133,6 @@ impl TemplateMatcher {
         })
     }
 }
+
+unsafe impl Send for TemplateMatcher {}
+unsafe impl Sync for TemplateMatcher {}

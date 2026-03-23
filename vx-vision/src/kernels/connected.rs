@@ -1,4 +1,8 @@
 //! Connected-components labeling via iterative label propagation.
+//!
+//! No `encode()` method is provided because labeling requires iterative
+//! GPU dispatches until convergence, with a CPU-side convergence check
+//! between passes.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -13,11 +17,13 @@ use objc2_metal::{
 };
 
 use crate::context::Context;
+use crate::error::{Error, Result};
 use crate::texture::Texture;
 use crate::types::CCLParams;
 
 /// Configuration for connected-components labeling.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct CCLConfig {
     /// Foreground threshold (0.0--1.0); pixels above are foreground.
     pub threshold: f32,
@@ -44,28 +50,28 @@ pub struct CCLResult {
     pub iterations: u32,
 }
 
-/// Connected-components labeling compute pipelines.
+/// Connected-components labeling pipelines. Requires CPU readback for convergence checks.
 pub struct ConnectedComponents {
     init_pipeline:    Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     iterate_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl ConnectedComponents {
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    pub fn new(ctx: &Context) -> Result<Self> {
         let init_name = objc2_foundation::ns_string!("ccl_init");
         let iter_name = objc2_foundation::ns_string!("ccl_iterate");
 
         let init_func = ctx.library().newFunctionWithName(init_name)
-            .ok_or_else(|| "Missing kernel function 'ccl_init'".to_string())?;
+            .ok_or(Error::ShaderMissing("ccl_init".into()))?;
         let iter_func = ctx.library().newFunctionWithName(iter_name)
-            .ok_or_else(|| "Missing kernel function 'ccl_iterate'".to_string())?;
+            .ok_or(Error::ShaderMissing("ccl_iterate".into()))?;
 
         let init_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&init_func)
-            .map_err(|e| format!("Failed to create ccl_init pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("ccl_init: {e}")))?;
         let iterate_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&iter_func)
-            .map_err(|e| format!("Failed to create ccl_iterate pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("ccl_iterate: {e}")))?;
 
         Ok(Self { init_pipeline, iterate_pipeline })
     }
@@ -76,7 +82,7 @@ impl ConnectedComponents {
         ctx:    &Context,
         input:  &Texture,
         config: &CCLConfig,
-    ) -> Result<CCLResult, String> {
+    ) -> Result<CCLResult> {
         let w = input.width();
         let h = input.height();
         let n_pixels = (w as usize) * (h as usize);
@@ -87,17 +93,15 @@ impl ConnectedComponents {
             threshold: config.threshold,
         };
 
-        // Ping-pong label buffers and atomic changed flag
         let labels_a = vx_gpu::UnifiedBuffer::<u32>::new(ctx.device(), n_pixels)?;
         let labels_b = vx_gpu::UnifiedBuffer::<u32>::new(ctx.device(), n_pixels)?;
         let mut changed_buf = vx_gpu::UnifiedBuffer::<u32>::new(ctx.device(), 1)?;
 
-        // Initialize labels
         {
             let cmd_buf = ctx.queue().commandBuffer()
-                .ok_or("Failed to create command buffer")?;
+                .ok_or(Error::Gpu("failed to create command buffer".into()))?;
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create compute encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
             unsafe {
                 encoder.setComputePipelineState(&self.init_pipeline);
@@ -122,7 +126,6 @@ impl ConnectedComponents {
             cmd_buf.waitUntilCompleted();
         }
 
-        // Propagate labels until convergence
         let mut read_a = true;
         let mut iterations = 0u32;
 
@@ -136,9 +139,9 @@ impl ConnectedComponents {
             };
 
             let cmd_buf = ctx.queue().commandBuffer()
-                .ok_or("Failed to create command buffer")?;
+                .ok_or(Error::Gpu("failed to create command buffer".into()))?;
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create compute encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
             unsafe {
                 encoder.setComputePipelineState(&self.iterate_pipeline);
@@ -171,7 +174,6 @@ impl ConnectedComponents {
             }
         }
 
-        // Read back converged labels
         let final_labels = if read_a {
             labels_a.as_slice()
         } else {
@@ -179,7 +181,6 @@ impl ConnectedComponents {
         };
         let labels = final_labels.to_vec();
 
-        // Count distinct foreground labels
         let mut unique: std::collections::HashSet<u32> = std::collections::HashSet::new();
         for &l in &labels {
             if l > 0 {
@@ -195,3 +196,6 @@ impl ConnectedComponents {
         })
     }
 }
+
+unsafe impl Send for ConnectedComponents {}
+unsafe impl Sync for ConnectedComponents {}

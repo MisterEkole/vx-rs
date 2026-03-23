@@ -13,6 +13,7 @@ use objc2_metal::{
 };
 
 use crate::context::Context;
+use crate::error::{Error, Result};
 use crate::texture::Texture;
 use crate::types::ColorParams;
 
@@ -24,8 +25,11 @@ pub struct ColorConvert {
     hsv_to_rgba_pipe:  Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
+unsafe impl Send for ColorConvert {}
+unsafe impl Sync for ColorConvert {}
+
 impl ColorConvert {
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    pub fn new(ctx: &Context) -> Result<Self> {
         let names = [
             ("rgba_to_gray", "rgba_to_gray"),
             ("gray_to_rgba", "gray_to_rgba"),
@@ -37,10 +41,10 @@ impl ColorConvert {
         for (name_str, _) in &names {
             let ns_name = objc2_foundation::NSString::from_str(name_str);
             let func = ctx.library().newFunctionWithName(&ns_name)
-                .ok_or_else(|| format!("Missing kernel function '{name_str}'"))?;
+                .ok_or(Error::ShaderMissing((*name_str).into()))?;
             let pipe = ctx.device()
                 .newComputePipelineStateWithFunction_error(&func)
-                .map_err(|e| format!("Failed to create {name_str} pipeline: {e}"))?;
+                .map_err(|e| Error::PipelineCompile(format!("{name_str}: {e}")))?;
             pipelines.push(pipe);
         }
 
@@ -58,7 +62,7 @@ impl ColorConvert {
         ctx:    &Context,
         input:  &Texture,
         output: &Texture,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         self.run_simple(ctx, &self.rgba_to_gray_pipe, input, output)
     }
 
@@ -68,7 +72,7 @@ impl ColorConvert {
         ctx:    &Context,
         input:  &Texture,
         output: &Texture,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         self.run_simple(ctx, &self.gray_to_rgba_pipe, input, output)
     }
 
@@ -78,7 +82,7 @@ impl ColorConvert {
         ctx:    &Context,
         input:  &Texture,
         output: &Texture,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         self.run_simple(ctx, &self.rgba_to_hsv_pipe, input, output)
     }
 
@@ -88,8 +92,68 @@ impl ColorConvert {
         ctx:    &Context,
         input:  &Texture,
         output: &Texture,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         self.run_simple(ctx, &self.hsv_to_rgba_pipe, input, output)
+    }
+
+    /// Encodes RGBA-to-gray without committing.
+    pub fn encode_rgba_to_gray(
+        &self,
+        cmd_buf: &ProtocolObject<dyn MTLCommandBuffer>,
+        input:   &Texture,
+        output:  &Texture,
+    ) -> Result<()> {
+        self.encode_simple(cmd_buf, &self.rgba_to_gray_pipe, input, output)
+    }
+
+    /// Encodes gray-to-RGBA without committing.
+    pub fn encode_gray_to_rgba(
+        &self,
+        cmd_buf: &ProtocolObject<dyn MTLCommandBuffer>,
+        input:   &Texture,
+        output:  &Texture,
+    ) -> Result<()> {
+        self.encode_simple(cmd_buf, &self.gray_to_rgba_pipe, input, output)
+    }
+
+    /// Encodes RGBA-to-HSV without committing.
+    pub fn encode_rgba_to_hsv(
+        &self,
+        cmd_buf: &ProtocolObject<dyn MTLCommandBuffer>,
+        input:   &Texture,
+        output:  &Texture,
+    ) -> Result<()> {
+        self.encode_simple(cmd_buf, &self.rgba_to_hsv_pipe, input, output)
+    }
+
+    /// Encodes HSV-to-RGBA without committing.
+    pub fn encode_hsv_to_rgba(
+        &self,
+        cmd_buf: &ProtocolObject<dyn MTLCommandBuffer>,
+        input:   &Texture,
+        output:  &Texture,
+    ) -> Result<()> {
+        self.encode_simple(cmd_buf, &self.hsv_to_rgba_pipe, input, output)
+    }
+
+    fn encode_simple(
+        &self,
+        cmd_buf:  &ProtocolObject<dyn MTLCommandBuffer>,
+        pipeline: &ProtocolObject<dyn MTLComputePipelineState>,
+        input:    &Texture,
+        output:   &Texture,
+    ) -> Result<()> {
+        let w = input.width();
+        let h = input.height();
+        let params = ColorParams { width: w, height: h };
+
+        let encoder = cmd_buf.computeCommandEncoder()
+            .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
+
+        Self::dispatch(&encoder, pipeline, input, output, &params, w, h);
+
+        encoder.endEncoding();
+        Ok(())
     }
 
     fn run_simple(
@@ -98,22 +162,39 @@ impl ColorConvert {
         pipeline: &ProtocolObject<dyn MTLComputePipelineState>,
         input:    &Texture,
         output:   &Texture,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         let w = input.width();
         let h = input.height();
         let params = ColorParams { width: w, height: h };
 
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
         let encoder = cmd_buf.computeCommandEncoder()
-            .ok_or("Failed to create compute encoder")?;
+            .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
+        Self::dispatch(&encoder, pipeline, input, output, &params, w, h);
+
+        encoder.endEncoding();
+        cmd_buf.commit();
+        cmd_buf.waitUntilCompleted();
+        Ok(())
+    }
+
+    fn dispatch(
+        encoder:  &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        pipeline: &ProtocolObject<dyn MTLComputePipelineState>,
+        input:    &Texture,
+        output:   &Texture,
+        params:   &ColorParams,
+        w:        u32,
+        h:        u32,
+    ) {
         unsafe {
             encoder.setComputePipelineState(pipeline);
             encoder.setTexture_atIndex(Some(input.raw()),  0);
             encoder.setTexture_atIndex(Some(output.raw()), 1);
             encoder.setBytes_length_atIndex(
-                NonNull::new_unchecked(&params as *const ColorParams as *mut c_void),
+                NonNull::new_unchecked(params as *const ColorParams as *mut c_void),
                 mem::size_of::<ColorParams>(),
                 0,
             );
@@ -125,10 +206,5 @@ impl ColorConvert {
             let tg_size = MTLSize { width: tew,        height: tg_h,       depth: 1 };
             encoder.dispatchThreads_threadsPerThreadgroup(grid, tg_size);
         }
-
-        encoder.endEncoding();
-        cmd_buf.commit();
-        cmd_buf.waitUntilCompleted();
-        Ok(())
     }
 }

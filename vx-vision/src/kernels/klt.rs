@@ -14,18 +14,17 @@ use objc2_metal::{
 
 use vx_gpu::UnifiedBuffer;
 use crate::context::Context;
+use crate::error::{Error, Result};
 use crate::texture::Texture;
 use crate::types::KLTParams;
 
 /// Configuration for the KLT tracker.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct KltConfig {
-
     pub max_iterations: u32,
     pub epsilon: f32,
-
     pub win_radius: i32,
-
     pub max_level: u32,
     pub min_eigenvalue: f32,
 }
@@ -42,11 +41,7 @@ impl Default for KltConfig {
     }
 }
 
-/// Four-level image pyramid for one frame.
-///
-/// Level 0 is full resolution; each subsequent level is half the dimensions.
-/// The shader binds exactly 4 texture slots per frame, so unused levels
-/// are still bound but never sampled.
+/// Four-level image pyramid (level 0 = full res, each subsequent level = half).
 pub struct ImagePyramid {
     pub levels: [Texture; 4],
 }
@@ -54,6 +49,9 @@ pub struct ImagePyramid {
 pub struct KltTracker {
     pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
+
+unsafe impl Send for KltTracker {}
+unsafe impl Sync for KltTracker {}
 
 /// Result of a single tracking pass.
 #[derive(Debug)]
@@ -66,21 +64,19 @@ pub struct KltResult {
 }
 
 impl KltTracker {
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    pub fn new(ctx: &Context) -> Result<Self> {
         let name = objc2_foundation::ns_string!("klt_track_forward");
 
         let func = ctx.library().newFunctionWithName(name)
-            .ok_or_else(|| "Missing kernel function 'klt_track_forward'".to_string())?;
+            .ok_or(Error::ShaderMissing("klt_track_forward".into()))?;
 
         let pipeline = ctx.device().newComputePipelineStateWithFunction_error(&func)
-            .map_err(|e| format!("Failed to create KLT pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("klt_track_forward: {e}")))?;
 
         Ok(Self { pipeline })
     }
 
-    /// Tracks points from `prev_pyramid` to `curr_pyramid` using iterative Lucas-Kanade.
-    ///
-    /// Returns tracked positions and per-point success/failure status.
+    /// Tracks points between pyramid frames. Returns positions and status.
     pub fn track(
         &self,
         ctx: &Context,
@@ -88,7 +84,7 @@ impl KltTracker {
         curr_pyramid: &ImagePyramid,
         prev_points: &[[f32; 2]],
         config: &KltConfig,
-    ) -> Result<KltResult, String> {
+    ) -> Result<KltResult> {
         if prev_points.is_empty() {
             return Ok(KltResult {
                 points: Vec::new(),
@@ -122,10 +118,10 @@ impl KltTracker {
         let _status_guard = status_buf.gpu_guard();
 
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
 
         let encoder = cmd_buf.computeCommandEncoder()
-            .ok_or("Failed to create compute encoder")?;
+            .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         Self::encode_into(
             &self.pipeline, &encoder,
@@ -137,7 +133,6 @@ impl KltTracker {
         encoder.endEncoding();
         cmd_buf.commit();
         cmd_buf.waitUntilCompleted();
-
 
         drop(_prev_guard);
         drop(_curr_guard);
@@ -152,7 +147,7 @@ impl KltTracker {
         Ok(KltResult { points, status })
     }
 
-    /// Encodes KLT tracking into an existing compute encoder without committing.
+    /// Encodes KLT tracking without committing.
     pub fn encode(
         &self,
         ctx: &Context,
@@ -161,9 +156,9 @@ impl KltTracker {
         curr_pyramid: &ImagePyramid,
         prev_points: &[[f32; 2]],
         config: &KltConfig,
-    ) -> Result<KltEncodedBuffers, String> {
+    ) -> Result<KltEncodedBuffers> {
         if prev_points.is_empty() {
-            return Err("Cannot encode KLT with zero points".into());
+            return Err(Error::InvalidConfig("cannot encode KLT with zero points".into()));
         }
 
         let n_points = prev_points.len();
@@ -202,9 +197,7 @@ impl KltTracker {
         })
     }
 
-    /// Reads tracked points from buffers returned by [`Self::encode`].
-    ///
-    /// Only valid after the command buffer has completed.
+    /// Reads tracked points after the command buffer has completed.
     pub fn read_results(buffers: &KltEncodedBuffers) -> KltResult {
         let points = buffers.curr_pts.as_slice()[..buffers.n_points].to_vec();
         let status = buffers.status.as_slice()[..buffers.n_points]
@@ -214,6 +207,7 @@ impl KltTracker {
         KltResult { points, status }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn encode_into(
         pipeline: &ProtocolObject<dyn MTLComputePipelineState>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
@@ -225,10 +219,6 @@ impl KltTracker {
         params: &KLTParams,
         n_points: usize,
     ) {
-        // SAFETY: setBytes requires a valid pointer; encoder ops interact with device state.
-        //
-        // Textures 0..3 = prev pyramid, 4..7 = curr pyramid.
-        // Dispatch is 1D: one thread per point.
         unsafe {
             encoder.setComputePipelineState(pipeline);
 
@@ -266,7 +256,7 @@ impl KltTracker {
     }
 }
 
-/// Buffers returned by [`KltTracker::encode`]. Keeps allocations alive until readback.
+/// Buffers returned by [`KltTracker::encode`]. Must outlive the command buffer.
 pub struct KltEncodedBuffers {
     pub prev_pts: UnifiedBuffer<[f32; 2]>,
     pub curr_pts: UnifiedBuffer<[f32; 2]>,

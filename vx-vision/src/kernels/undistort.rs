@@ -9,6 +9,7 @@ use objc2_metal::{
 };
 
 use crate::context::Context;
+use crate::error::{Error, Result};
 use crate::texture::Texture;
 
 /// Compiled lens undistortion pipeline.
@@ -17,23 +18,20 @@ pub struct Undistorter {
 }
 
 impl Undistorter {
-    /// Builds the compute pipeline from the context's shader library.
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    /// Compiles the undistortion pipeline.
+    pub fn new(ctx: &Context) -> Result<Self> {
         let name = objc2_foundation::ns_string!("undistort");
 
         let func = ctx.library().newFunctionWithName(name)
-            .ok_or_else(|| "Missing kernel function 'undistort'".to_string())?;
+            .ok_or(Error::ShaderMissing("undistort".into()))?;
 
         let pipeline = ctx.device().newComputePipelineStateWithFunction_error(&func)
-            .map_err(|e| format!("Failed to create undistort pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("undistort: {e}")))?;
 
         Ok(Self { pipeline })
     }
 
-    /// Remaps `input` into `output` using per-pixel float coordinate maps.
-    ///
-    /// `map_x` and `map_y` are R32Float textures with the same dimensions as
-    /// `output`. Synchronous: waits for GPU completion before returning.
+    /// Remaps `input` into `output` using per-pixel coordinate maps. Synchronous.
     pub fn apply(
         &self,
         ctx: &Context,
@@ -41,14 +39,14 @@ impl Undistorter {
         map_x:  &Texture,
         map_y:  &Texture,
         output: &Texture,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         let width  = output.width();
         let height = output.height();
 
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
         let encoder = cmd_buf.computeCommandEncoder()
-            .ok_or("Failed to create compute encoder")?;
+            .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         Self::encode_into(&self.pipeline, &encoder, input, map_x, map_y, output, width, height);
 
@@ -59,7 +57,7 @@ impl Undistorter {
         Ok(())
     }
 
-    /// Encodes the undistortion into an existing compute encoder without committing.
+    /// Encodes the undistortion without committing.
     pub fn encode(
         &self,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
@@ -73,6 +71,7 @@ impl Undistorter {
         Self::encode_into(&self.pipeline, encoder, input, map_x, map_y, output, width, height);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn encode_into(
         pipeline: &ProtocolObject<dyn MTLComputePipelineState>,
         encoder:  &ProtocolObject<dyn MTLComputeCommandEncoder>,
@@ -83,7 +82,6 @@ impl Undistorter {
         width:    u32,
         height:   u32,
     ) {
-        // Bindings: 0=input, 1=map_x, 2=map_y, 3=output. No params buffer.
         unsafe {
             encoder.setComputePipelineState(pipeline);
             encoder.setTexture_atIndex(Some(input.raw()),  0);
@@ -102,3 +100,6 @@ impl Undistorter {
         }
     }
 }
+
+unsafe impl Send for Undistorter {}
+unsafe impl Sync for Undistorter {}

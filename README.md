@@ -1,5 +1,6 @@
 # VX
 
+[![CI](https://github.com/MisterEkole/vx-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/MisterEkole/vx-rs/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/vx-vision.svg)](https://crates.io/crates/vx-vision)
 [![license](https://img.shields.io/crates/l/vx-vision.svg)](LICENSE)
 
@@ -17,23 +18,9 @@ The result: real-time classical vision algorithms with zero-copy memory, no C++ 
 
 VX is a three-layer stack:
 
-```
-┌─────────────────────────────────────────────┐
-│  Application Layer          (your code)     │
-│  Context::new() → detect() → corners        │
-├─────────────────────────────────────────────┤
-│  Kernel Layer               (vx-vision)     │
-│  28+ GPU kernels across 6 categories        │
-├─────────────────────────────────────────────┤
-│  Memory Layer               (vx-core)       │
-│  UnifiedBuffer<T> · GpuGuard<T> · Device    │
-└─────────────────────────────────────────────┘
-         ↕ zero-copy on Apple Silicon UMA
-┌─────────────────────────────────────────────┐
-│  Metal GPU                                  │
-│  .metal shaders (compiled at build time)    │
-└─────────────────────────────────────────────┘
-```
+<p align="center">
+  <img src="docs/src/vx_architecture_diagram.svg" alt="VX Architecture" width="700">
+</p>
 
 **Naming convention:** In this codebase, *shaders* refer to the MSL functions that run on the GPU (`shaders/*.metal`), and *kernels* refer to the Rust bindings that orchestrate them (`src/kernels/*.rs`).
 
@@ -82,13 +69,25 @@ cargo run --example fast_demo -- path/to/image.png
 
 The build script automatically compiles all `.metal` shaders into a single metallib and embeds it in the binary.
 
-See [docs/getting-started.md](docs/getting-started.md) for a detailed setup guide.
+See the [documentation](docs/src/getting-started.md) for a detailed setup guide.
 
 ## Documentation
 
-- [Getting Started](docs/getting-started.md) — setup, first project, core concepts
-- [API Guide](docs/api-guide.md) — kernel-by-kernel reference with usage patterns
-- [Performance](docs/performance.md) — TexturePool, Pipeline batching, optimization tips
+Build the docs locally with [mdBook](https://rust-lang.github.io/mdBook/):
+
+```bash
+cargo install mdbook
+cd docs && mdbook serve
+```
+
+Or read the source directly:
+
+- [Introduction](docs/src/introduction.md)
+- [Getting Started](docs/src/getting-started.md) — installation, core concepts, first program
+- [Architecture](docs/src/architecture.md) — three-layer stack, shader-kernel contract, memory model
+- [API Reference](docs/src/api/detection.md) — every kernel with usage examples
+- [Pipeline & Performance](docs/src/performance.md) — batching, TexturePool, optimization
+- [Adding a Kernel](docs/src/adding-a-kernel.md) — contributor guide
 
 ## License
 

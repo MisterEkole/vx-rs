@@ -1,9 +1,7 @@
 // examples/threshold_demo.rs
 //
 // Demonstrates thresholding and segmentation:
-//   - Otsu's automatic threshold
-//   - Adaptive threshold (with GPU integral image)
-//   - Color conversion (if RGBA input)
+//   Otsu, adaptive threshold (GPU integral image), and fixed binary.
 //
 // Run with:
 //   cargo run --release --example threshold_demo -- path/to/image.png
@@ -26,7 +24,6 @@ fn main() {
     let (w, h) = img.dimensions();
     println!("Image: {}x{}\n", w, h);
 
-    // ── GPU setup ──
     let ctx = Context::new().expect("No Metal GPU available");
     let thresh = Threshold::new(&ctx).expect("Threshold pipeline");
     let integral = IntegralImage::new(&ctx).expect("Integral pipeline");
@@ -35,22 +32,21 @@ fn main() {
     let texture = ctx.texture_gray8(img.as_raw(), w, h)
         .expect("Failed to create texture");
 
-    // ── 1. Histogram ──
+    // Histogram
     let t1 = Instant::now();
     let bins = hist.compute(&ctx, &texture).expect("Histogram failed");
     let hist_ms = t1.elapsed().as_secs_f64() * 1000.0;
 
     println!("Histogram:          {:.2} ms", hist_ms);
-    // Print a simple ASCII histogram of 8 consolidated bins
     print!("  Distribution:     ");
     for chunk in bins.chunks(32) {
         let sum: u32 = chunk.iter().sum();
         let bar_len = (sum as f64 / (w as f64 * h as f64) * 40.0) as usize;
-        print!("{}", "#".repeat(bar_len.max(0).min(5)));
+        print!("{}", "#".repeat(bar_len.clamp(0, 5)));
     }
     println!();
 
-    // ── 2. Otsu's method ──
+    // Otsu's method
     let t2 = Instant::now();
     let otsu_output = ctx.texture_output_gray8(w, h).expect("output");
     let otsu_val = thresh.otsu(&ctx, &texture, &otsu_output)
@@ -65,7 +61,7 @@ fn main() {
     println!("  Threshold:        {:.3} ({}/255)", otsu_val, (otsu_val * 255.0) as u32);
     println!("  Foreground:       {:.1}% white", white_pct);
 
-    // ── 3. Fixed binary threshold at 0.5 ──
+    // Fixed binary threshold at 0.5
     let t3 = Instant::now();
     let binary_output = ctx.texture_output_gray8(w, h).expect("output");
     thresh.binary(&ctx, &texture, &binary_output, 0.5, false)
@@ -79,13 +75,12 @@ fn main() {
     println!("  Foreground:       {:.1}% white",
         binary_white as f64 / binary_pixels.len() as f64 * 100.0);
 
-    // ── 4. Integral image ──
+    // Integral image
     let t4 = Instant::now();
     let integral_tex = integral.compute(&ctx, &texture)
         .expect("Integral image failed");
     let integral_ms = t4.elapsed().as_secs_f64() * 1000.0;
 
-    // Sanity check: bottom-right corner should be sum of all pixels
     let integral_data = integral_tex.read_r32float();
     let total_sum = integral_data.last().unwrap_or(&0.0);
     let expected_sum: f64 = img.as_raw().iter().map(|&v| v as f64 / 255.0).sum();
@@ -93,14 +88,10 @@ fn main() {
     println!("\nIntegral image:     {:.2} ms", integral_ms);
     println!("  Total sum:        {:.1} (expected ~{:.1})", total_sum, expected_sum);
 
-    // ── 5. Adaptive threshold ──
+    // Adaptive threshold
     let t5 = Instant::now();
     let adaptive_output = ctx.texture_output_gray8(w, h).expect("output");
-    let adaptive_config = AdaptiveThresholdConfig {
-        radius: 15,
-        c: 0.03,
-        invert: false,
-    };
+    let adaptive_config = AdaptiveThresholdConfig::new(15, 0.03, false);
     thresh.adaptive(&ctx, &texture, &integral_tex, &adaptive_output, &adaptive_config)
         .expect("Adaptive threshold failed");
     let adaptive_ms = t5.elapsed().as_secs_f64() * 1000.0;
@@ -112,7 +103,7 @@ fn main() {
     println!("  Foreground:       {:.1}% white",
         adaptive_white as f64 / adaptive_pixels.len() as f64 * 100.0);
 
-    // ── Summary ──
+    // Summary
     println!("\n{}", "=".repeat(50));
     println!("Total pipeline:     {:.2} ms", hist_ms + otsu_ms + binary_ms + integral_ms + adaptive_ms);
     println!("  Histogram:        {:.2} ms", hist_ms);

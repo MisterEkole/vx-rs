@@ -29,4 +29,5 @@ pub mod template_match;
 pub mod hough;
 pub mod distance;
 pub mod connected;
+pub mod indirect;
 pub mod sift;

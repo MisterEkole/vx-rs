@@ -4,6 +4,7 @@ use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{MTLCommandQueue, MTLDevice, MTLLibrary};
 
+use crate::error::{Error, Result};
 use crate::texture::Texture;
 
 /// Metal device, command queue, and compiled shader library.
@@ -21,9 +22,10 @@ pub struct Context {
 
 impl Context {
     /// Initializes the default Metal device and loads the embedded shader library.
-    pub fn new() -> Result<Self, String> {
+    #[must_use = "contains the GPU context needed for all operations"]
+    pub fn new() -> Result<Self> {
         let device = vx_gpu::default_device()
-            .ok_or_else(|| "No Metal device found (Apple Silicon or discrete GPU required)".to_string())?;
+            .ok_or(Error::DeviceNotFound)?;
         let queue = vx_gpu::new_queue(&device)?;
         let library = crate::load_library(&device)?;
 
@@ -31,21 +33,13 @@ impl Context {
     }
 
     /// Creates an R8Unorm texture from grayscale pixel data.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # let ctx = vx_vision::Context::new().unwrap();
-    /// let img = image::open("photo.png").unwrap().to_luma8();
-    /// let (w, h) = img.dimensions();
-    /// let texture = ctx.texture_gray8(img.as_raw(), w, h).unwrap();
-    /// ```
     pub fn texture_gray8(
+       
         &self,
         pixels: &[u8],
         width: u32,
         height: u32,
-    ) -> Result<Texture, String> {
+    ) -> Result<Texture> {
         Texture::from_gray8(&self.device, pixels, width, height)
     }
 
@@ -55,12 +49,12 @@ impl Context {
         data:   &[f32],
         width:  u32,
         height: u32,
-    ) -> Result<Texture, String> {
+    ) -> Result<Texture> {
         Texture::from_r32float(&self.device, data, width, height)
     }
 
     /// Creates an empty R8Unorm output texture with `ShaderWrite` usage.
-    pub fn texture_output_gray8(&self, width: u32, height: u32) -> Result<Texture, String> {
+    pub fn texture_output_gray8(&self, width: u32, height: u32) -> Result<Texture> {
         Texture::output_gray8(&self.device, width, height)
     }
 
@@ -70,18 +64,28 @@ impl Context {
         pixels: &[u8],
         width:  u32,
         height: u32,
-    ) -> Result<Texture, String> {
+    ) -> Result<Texture> {
         Texture::from_rgba8(&self.device, pixels, width, height)
     }
 
     /// Creates an empty RGBA8Unorm output texture.
-    pub fn texture_output_rgba8(&self, width: u32, height: u32) -> Result<Texture, String> {
+    pub fn texture_output_rgba8(&self, width: u32, height: u32) -> Result<Texture> {
         Texture::output_rgba8(&self.device, width, height)
     }
 
     /// Creates an empty R32Float output texture.
-    pub fn texture_output_r32float(&self, width: u32, height: u32) -> Result<Texture, String> {
+    pub fn texture_output_r32float(&self, width: u32, height: u32) -> Result<Texture> {
         Texture::output_r32float(&self.device, width, height)
+    }
+
+    /// Creates an R8Unorm texture with `ShaderRead | ShaderWrite` usage for pipeline intermediates.
+    pub fn texture_intermediate_gray8(&self, width: u32, height: u32) -> Result<Texture> {
+        Texture::intermediate_gray8(&self.device, width, height)
+    }
+
+    /// Creates an R32Float texture with `ShaderRead | ShaderWrite` usage for pipeline intermediates.
+    pub fn texture_intermediate_r32float(&self, width: u32, height: u32) -> Result<Texture> {
+        Texture::intermediate_r32float(&self.device, width, height)
     }
 
     pub(crate) fn device(&self) -> &ProtocolObject<dyn MTLDevice> {
@@ -96,3 +100,7 @@ impl Context {
         &self.library
     }
 }
+
+// SAFETY: MTLDevice, MTLCommandQueue, and MTLLibrary are all thread-safe.
+unsafe impl Send for Context {}
+unsafe impl Sync for Context {}

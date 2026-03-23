@@ -13,6 +13,7 @@ use objc2_metal::{
 };
 
 use crate::context::Context;
+use crate::error::{Error, Result};
 use crate::kernels::histogram::Histogram;
 use crate::kernels::integral::IntegralImage;
 use crate::texture::Texture;
@@ -20,15 +21,21 @@ use crate::types::{ThresholdParams, AdaptiveThresholdParams};
 
 /// Configuration for adaptive thresholding.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct AdaptiveThresholdConfig {
     /// Half-window size for the local mean computation.
     pub radius: i32,
-
     /// Constant subtracted from the local mean before comparison.
     pub c: f32,
-
     /// Invert the result.
     pub invert: bool,
+}
+
+impl AdaptiveThresholdConfig {
+    /// Creates a config with the given parameters.
+    pub fn new(radius: i32, c: f32, invert: bool) -> Self {
+        Self { radius, c, invert }
+    }
 }
 
 impl Default for AdaptiveThresholdConfig {
@@ -46,21 +53,21 @@ pub struct Threshold {
 }
 
 impl Threshold {
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    pub fn new(ctx: &Context) -> Result<Self> {
         let bin_name  = objc2_foundation::ns_string!("threshold_binary");
         let adpt_name = objc2_foundation::ns_string!("threshold_adaptive");
 
         let bin_func = ctx.library().newFunctionWithName(bin_name)
-            .ok_or_else(|| "Missing kernel function 'threshold_binary'".to_string())?;
+            .ok_or(Error::ShaderMissing("threshold_binary".into()))?;
         let adpt_func = ctx.library().newFunctionWithName(adpt_name)
-            .ok_or_else(|| "Missing kernel function 'threshold_adaptive'".to_string())?;
+            .ok_or(Error::ShaderMissing("threshold_adaptive".into()))?;
 
         let binary_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&bin_func)
-            .map_err(|e| format!("Failed to create threshold_binary pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("threshold_binary: {e}")))?;
         let adaptive_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&adpt_func)
-            .map_err(|e| format!("Failed to create threshold_adaptive pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("threshold_adaptive: {e}")))?;
 
         let histogram = Histogram::new(ctx)?;
         let integral  = IntegralImage::new(ctx)?;
@@ -76,7 +83,7 @@ impl Threshold {
         output:    &Texture,
         threshold: f32,
         invert:    bool,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         let w = input.width();
         let h = input.height();
         let params = ThresholdParams {
@@ -87,11 +94,11 @@ impl Threshold {
         };
 
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
         let encoder = cmd_buf.computeCommandEncoder()
-            .ok_or("Failed to create compute encoder")?;
+            .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
-        Self::encode_binary(&self.binary_pipeline, &encoder, input, output, &params, w, h);
+        Self::encode_binary_pass(&self.binary_pipeline, &encoder, input, output, &params, w, h);
 
         encoder.endEncoding();
         cmd_buf.commit();
@@ -99,10 +106,75 @@ impl Threshold {
         Ok(())
     }
 
+    /// Encodes a binary threshold without committing.
+    pub fn encode_binary(
+        &self,
+        cmd_buf:   &ProtocolObject<dyn MTLCommandBuffer>,
+        input:     &Texture,
+        output:    &Texture,
+        threshold: f32,
+        invert:    bool,
+    ) -> Result<()> {
+        let w = input.width();
+        let h = input.height();
+        let params = ThresholdParams {
+            width: w, height: h, threshold,
+            invert: if invert { 1 } else { 0 },
+        };
+
+        let encoder = cmd_buf.computeCommandEncoder()
+            .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
+        Self::encode_binary_pass(&self.binary_pipeline, &encoder, input, output, &params, w, h);
+        encoder.endEncoding();
+        Ok(())
+    }
+
+    /// Encodes adaptive threshold without committing. Requires a precomputed integral image.
+    pub fn encode_adaptive(
+        &self,
+        cmd_buf:  &ProtocolObject<dyn MTLCommandBuffer>,
+        input:    &Texture,
+        integral: &Texture,
+        output:   &Texture,
+        config:   &AdaptiveThresholdConfig,
+    ) -> Result<()> {
+        let w = input.width();
+        let h = input.height();
+        let params = AdaptiveThresholdParams {
+            width:  w,
+            height: h,
+            radius: config.radius,
+            c:      config.c,
+            invert: if config.invert { 1 } else { 0 },
+        };
+
+        let encoder = cmd_buf.computeCommandEncoder()
+            .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
+
+        unsafe {
+            encoder.setComputePipelineState(&self.adaptive_pipeline);
+            encoder.setTexture_atIndex(Some(input.raw()),    0);
+            encoder.setTexture_atIndex(Some(integral.raw()), 1);
+            encoder.setTexture_atIndex(Some(output.raw()),   2);
+            encoder.setBytes_length_atIndex(
+                NonNull::new_unchecked(&params as *const AdaptiveThresholdParams as *mut c_void),
+                mem::size_of::<AdaptiveThresholdParams>(),
+                0,
+            );
+
+            let tew    = self.adaptive_pipeline.threadExecutionWidth();
+            let max_tg = self.adaptive_pipeline.maxTotalThreadsPerThreadgroup();
+            let tg_h   = (max_tg / tew).max(1);
+            let grid    = MTLSize { width: w as usize, height: h as usize, depth: 1 };
+            let tg_size = MTLSize { width: tew,        height: tg_h,       depth: 1 };
+            encoder.dispatchThreads_threadsPerThreadgroup(grid, tg_size);
+        }
+
+        encoder.endEncoding();
+        Ok(())
+    }
+
     /// Adaptive threshold using a precomputed integral image.
-    ///
-    /// Compares each pixel to the local mean in a `(2*radius+1)^2` window,
-    /// evaluated in O(1) via the summed area table.
     pub fn adaptive(
         &self,
         ctx:      &Context,
@@ -110,7 +182,7 @@ impl Threshold {
         integral: &Texture,
         output:   &Texture,
         config:   &AdaptiveThresholdConfig,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         let w = input.width();
         let h = input.height();
         let params = AdaptiveThresholdParams {
@@ -122,9 +194,9 @@ impl Threshold {
         };
 
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
         let encoder = cmd_buf.computeCommandEncoder()
-            .ok_or("Failed to create compute encoder")?;
+            .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         unsafe {
             encoder.setComputePipelineState(&self.adaptive_pipeline);
@@ -151,21 +223,17 @@ impl Threshold {
         Ok(())
     }
 
-    /// Otsu's method: selects the optimal global threshold by maximizing
-    /// inter-class variance, then applies binary thresholding.
-    ///
-    /// Returns the computed threshold.
+    /// Otsu's method: auto-selects threshold, returns the computed value.
     pub fn otsu(
         &self,
         ctx:    &Context,
         input:  &Texture,
         output: &Texture,
-    ) -> Result<f32, String> {
+    ) -> Result<f32> {
         let hist = self.histogram.compute(ctx, input)?;
         let total_pixels = (input.width() as f64) * (input.height() as f64);
         let threshold = otsu_threshold(&hist, total_pixels);
         self.binary(ctx, input, output, threshold, false)?;
-
         Ok(threshold)
     }
 
@@ -176,12 +244,12 @@ impl Threshold {
         input:  &Texture,
         output: &Texture,
         config: &AdaptiveThresholdConfig,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         let integral = self.integral.compute(ctx, input)?;
         self.adaptive(ctx, input, &integral, output, config)
     }
 
-    fn encode_binary(
+    fn encode_binary_pass(
         pipeline: &ProtocolObject<dyn MTLComputePipelineState>,
         encoder:  &ProtocolObject<dyn MTLComputeCommandEncoder>,
         input:    &Texture,
@@ -210,7 +278,9 @@ impl Threshold {
     }
 }
 
-/// Optimal threshold from a 256-bin histogram via Otsu's method.
+unsafe impl Send for Threshold {}
+unsafe impl Sync for Threshold {}
+
 fn otsu_threshold(hist: &[u32; 256], total_pixels: f64) -> f32 {
     let mut sum_total = 0.0f64;
     for (i, &count) in hist.iter().enumerate() {
@@ -242,6 +312,5 @@ fn otsu_threshold(hist: &[u32; 256], total_pixels: f64) -> f32 {
         }
     }
 
-    // Normalize to [0, 1]
     best_threshold as f32 / 255.0
 }

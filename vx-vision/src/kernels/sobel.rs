@@ -13,6 +13,7 @@ use objc2_metal::{
 };
 
 use crate::context::Context;
+use crate::error::{Error, Result};
 use crate::texture::Texture;
 use crate::types::SobelParams;
 
@@ -28,28 +29,40 @@ pub struct SobelResult {
     pub direction: Texture,
 }
 
-/// Compiled Sobel pipeline. Reusable across frames.
+/// Keeps textures alive until the command buffer completes.
+pub struct SobelEncodedState {
+    /// Horizontal gradient Ix (R32Float).
+    pub grad_x: Texture,
+    /// Vertical gradient Iy (R32Float).
+    pub grad_y: Texture,
+    /// Gradient magnitude (R32Float).
+    pub magnitude: Texture,
+    /// Gradient direction in radians (R32Float).
+    pub direction: Texture,
+}
+
+/// Compiled Sobel gradient pipeline.
 pub struct SobelFilter {
     sobel_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     mag_pipeline:   Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl SobelFilter {
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    pub fn new(ctx: &Context) -> Result<Self> {
         let sobel_name = objc2_foundation::ns_string!("sobel_3x3");
         let mag_name   = objc2_foundation::ns_string!("gradient_magnitude");
 
         let sobel_func = ctx.library().newFunctionWithName(sobel_name)
-            .ok_or_else(|| "Missing kernel function 'sobel_3x3'".to_string())?;
+            .ok_or_else(|| Error::ShaderMissing("sobel_3x3".into()))?;
         let mag_func = ctx.library().newFunctionWithName(mag_name)
-            .ok_or_else(|| "Missing kernel function 'gradient_magnitude'".to_string())?;
+            .ok_or_else(|| Error::ShaderMissing("gradient_magnitude".into()))?;
 
         let sobel_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&sobel_func)
-            .map_err(|e| format!("Failed to create sobel_3x3 pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("sobel_3x3: {e}")))?;
         let mag_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&mag_func)
-            .map_err(|e| format!("Failed to create gradient_magnitude pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("gradient_magnitude: {e}")))?;
 
         Ok(Self { sobel_pipeline, mag_pipeline })
     }
@@ -59,7 +72,7 @@ impl SobelFilter {
         &self,
         ctx:   &Context,
         input: &Texture,
-    ) -> Result<SobelResult, String> {
+    ) -> Result<SobelResult> {
         let w = input.width();
         let h = input.height();
 
@@ -71,18 +84,18 @@ impl SobelFilter {
         let params = SobelParams { width: w, height: h };
 
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
 
         {
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create compute encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
             Self::encode_sobel(&self.sobel_pipeline, &encoder, input, &grad_x, &grad_y, &params, w, h);
             encoder.endEncoding();
         }
 
         {
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create compute encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
             Self::encode_magnitude(&self.mag_pipeline, &encoder, &grad_x, &grad_y, &magnitude, &direction, &params, w, h);
             encoder.endEncoding();
         }
@@ -98,7 +111,7 @@ impl SobelFilter {
         &self,
         ctx:   &Context,
         input: &Texture,
-    ) -> Result<(Texture, Texture), String> {
+    ) -> Result<(Texture, Texture)> {
         let w = input.width();
         let h = input.height();
 
@@ -108,9 +121,9 @@ impl SobelFilter {
         let params = SobelParams { width: w, height: h };
 
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
         let encoder = cmd_buf.computeCommandEncoder()
-            .ok_or("Failed to create compute encoder")?;
+            .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         Self::encode_sobel(&self.sobel_pipeline, &encoder, input, &grad_x, &grad_y, &params, w, h);
 
@@ -121,6 +134,41 @@ impl SobelFilter {
         Ok((grad_x, grad_y))
     }
 
+    /// Encodes Sobel + magnitude/direction into `cmd_buf` without committing.
+    pub fn encode(
+        &self,
+        ctx:     &Context,
+        cmd_buf: &ProtocolObject<dyn MTLCommandBuffer>,
+        input:   &Texture,
+    ) -> Result<SobelEncodedState> {
+        let w = input.width();
+        let h = input.height();
+
+        let grad_x    = Texture::intermediate_r32float(ctx.device(), w, h)?;
+        let grad_y    = Texture::intermediate_r32float(ctx.device(), w, h)?;
+        let magnitude = Texture::intermediate_r32float(ctx.device(), w, h)?;
+        let direction = Texture::intermediate_r32float(ctx.device(), w, h)?;
+
+        let params = SobelParams { width: w, height: h };
+
+        {
+            let encoder = cmd_buf.computeCommandEncoder()
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
+            Self::encode_sobel(&self.sobel_pipeline, &encoder, input, &grad_x, &grad_y, &params, w, h);
+            encoder.endEncoding();
+        }
+
+        {
+            let encoder = cmd_buf.computeCommandEncoder()
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
+            Self::encode_magnitude(&self.mag_pipeline, &encoder, &grad_x, &grad_y, &magnitude, &direction, &params, w, h);
+            encoder.endEncoding();
+        }
+
+        Ok(SobelEncodedState { grad_x, grad_y, magnitude, direction })
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn encode_sobel(
         pipeline: &ProtocolObject<dyn MTLComputePipelineState>,
         encoder:  &ProtocolObject<dyn MTLComputeCommandEncoder>,
@@ -151,6 +199,7 @@ impl SobelFilter {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn encode_magnitude(
         pipeline:  &ProtocolObject<dyn MTLComputePipelineState>,
         encoder:   &ProtocolObject<dyn MTLComputeCommandEncoder>,
@@ -183,3 +232,6 @@ impl SobelFilter {
         }
     }
 }
+
+unsafe impl Send for SobelFilter {}
+unsafe impl Sync for SobelFilter {}

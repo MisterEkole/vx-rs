@@ -13,13 +13,15 @@ use objc2_metal::{
 };
 
 use crate::context::Context;
-use crate::kernels::gaussian::{GaussianBlur, GaussianConfig};
-use crate::kernels::sobel::SobelFilter;
+use crate::error::{Error, Result};
+use crate::kernels::gaussian::{GaussianBlur, GaussianConfig, GaussianEncodedState};
+use crate::kernels::sobel::{SobelFilter, SobelEncodedState};
 use crate::texture::Texture;
 use crate::types::CannyParams;
 
 /// Configuration for Canny edge detection.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct CannyConfig {
     /// Low hysteresis threshold. Edges below this are discarded.
     pub low_threshold: f32,
@@ -45,6 +47,16 @@ impl Default for CannyConfig {
     }
 }
 
+/// Keeps textures alive until the command buffer completes.
+pub struct CannyEncodedState {
+    /// Final edge map (R32Float, 1.0 = edge).
+    pub edges: Texture,
+    _blurred: Texture,
+    _sobel_state: SobelEncodedState,
+    _nms_output: Texture,
+    _blur_state: GaussianEncodedState,
+}
+
 /// Compiled Canny edge detection pipeline.
 pub struct CannyDetector {
     blur:      GaussianBlur,
@@ -54,7 +66,7 @@ pub struct CannyDetector {
 }
 
 impl CannyDetector {
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    pub fn new(ctx: &Context) -> Result<Self> {
         let blur  = GaussianBlur::new(ctx)?;
         let sobel = SobelFilter::new(ctx)?;
 
@@ -62,29 +74,27 @@ impl CannyDetector {
         let hyst_name = objc2_foundation::ns_string!("canny_hysteresis");
 
         let nms_func = ctx.library().newFunctionWithName(nms_name)
-            .ok_or_else(|| "Missing kernel function 'canny_nms'".to_string())?;
+            .ok_or_else(|| Error::ShaderMissing("canny_nms".into()))?;
         let hyst_func = ctx.library().newFunctionWithName(hyst_name)
-            .ok_or_else(|| "Missing kernel function 'canny_hysteresis'".to_string())?;
+            .ok_or_else(|| Error::ShaderMissing("canny_hysteresis".into()))?;
 
         let nms_pipe = ctx.device()
             .newComputePipelineStateWithFunction_error(&nms_func)
-            .map_err(|e| format!("Failed to create canny_nms pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("canny_nms: {e}")))?;
         let hyst_pipe = ctx.device()
             .newComputePipelineStateWithFunction_error(&hyst_func)
-            .map_err(|e| format!("Failed to create canny_hysteresis pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("canny_hysteresis: {e}")))?;
 
         Ok(Self { blur, sobel, nms_pipe, hyst_pipe })
     }
 
-    /// Runs the full Canny pipeline on a grayscale input.
-    ///
-    /// Returns a R32Float texture where 1.0 = edge, 0.0 = non-edge.
+    /// Runs the full Canny pipeline. Returns R32Float (1.0 = edge).
     pub fn detect(
         &self,
         ctx:    &Context,
         input:  &Texture,
         config: &CannyConfig,
-    ) -> Result<Texture, String> {
+    ) -> Result<Texture> {
         let w = input.width();
         let h = input.height();
 
@@ -106,11 +116,11 @@ impl CannyDetector {
         };
 
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
 
         {
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create compute encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
             Self::encode_2d(&self.nms_pipe, &encoder, &[
                 &sobel_result.magnitude, &sobel_result.direction, &nms_output,
             ], &params, w, h);
@@ -120,7 +130,7 @@ impl CannyDetector {
         let edges = Texture::intermediate_r32float(ctx.device(), w, h)?;
         {
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create compute encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
             Self::encode_2d(&self.hyst_pipe, &encoder, &[
                 &nms_output, &edges,
             ], &params, w, h);
@@ -131,6 +141,61 @@ impl CannyDetector {
         cmd_buf.waitUntilCompleted();
 
         Ok(edges)
+    }
+
+    /// Encodes the full Canny pipeline into `cmd_buf` without committing.
+    pub fn encode(
+        &self,
+        ctx:     &Context,
+        cmd_buf: &ProtocolObject<dyn MTLCommandBuffer>,
+        input:   &Texture,
+        config:  &CannyConfig,
+    ) -> Result<CannyEncodedState> {
+        let w = input.width();
+        let h = input.height();
+
+        let blurred = Texture::intermediate_gray8(ctx.device(), w, h)?;
+        let blur_state = self.blur.encode(ctx, cmd_buf, input, &blurred, &GaussianConfig {
+            sigma:  config.blur_sigma,
+            radius: config.blur_radius,
+        })?;
+
+        let sobel_state = self.sobel.encode(ctx, cmd_buf, &blurred)?;
+
+        let nms_output = Texture::intermediate_r32float(ctx.device(), w, h)?;
+        let params = CannyParams {
+            width:          w,
+            height:         h,
+            low_threshold:  config.low_threshold,
+            high_threshold: config.high_threshold,
+        };
+
+        {
+            let encoder = cmd_buf.computeCommandEncoder()
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
+            Self::encode_2d(&self.nms_pipe, &encoder, &[
+                &sobel_state.magnitude, &sobel_state.direction, &nms_output,
+            ], &params, w, h);
+            encoder.endEncoding();
+        }
+
+        let edges = Texture::intermediate_r32float(ctx.device(), w, h)?;
+        {
+            let encoder = cmd_buf.computeCommandEncoder()
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
+            Self::encode_2d(&self.hyst_pipe, &encoder, &[
+                &nms_output, &edges,
+            ], &params, w, h);
+            encoder.endEncoding();
+        }
+
+        Ok(CannyEncodedState {
+            edges,
+            _blurred: blurred,
+            _sobel_state: sobel_state,
+            _nms_output: nms_output,
+            _blur_state: blur_state,
+        })
     }
 
     fn encode_2d(
@@ -161,3 +226,6 @@ impl CannyDetector {
         }
     }
 }
+
+unsafe impl Send for CannyDetector {}
+unsafe impl Sync for CannyDetector {}

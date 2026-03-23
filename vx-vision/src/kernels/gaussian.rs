@@ -13,16 +13,17 @@ use objc2_metal::{
 };
 
 use crate::context::Context;
+use crate::error::{Error, Result};
 use crate::texture::Texture;
 use crate::types::GaussianParams;
 
 /// Configuration for the Gaussian blur kernel.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct GaussianConfig {
-    /// Standard deviation in pixels. Typical: 0.5--3.0.
+    /// Standard deviation in pixels (typical: 0.5--3.0).
     pub sigma: f32,
-
-    /// Half-width of the convolution kernel. Full kernel spans `2 * radius + 1` taps.
+    /// Half-width of the convolution kernel (`2 * radius + 1` taps).
     pub radius: u32,
 }
 
@@ -32,50 +33,44 @@ impl Default for GaussianConfig {
     }
 }
 
-/// Compiled separable Gaussian blur pipeline. Reusable across frames.
+/// Compiled separable Gaussian blur pipeline.
 pub struct GaussianBlur {
     h_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     v_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl GaussianBlur {
-    /// Creates both horizontal and vertical pipelines from the context's shader library.
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    /// Creates both horizontal and vertical blur pipelines.
+    pub fn new(ctx: &Context) -> Result<Self> {
         let h_name = objc2_foundation::ns_string!("gaussian_blur_h");
         let v_name = objc2_foundation::ns_string!("gaussian_blur_v");
 
         let h_func = ctx.library().newFunctionWithName(h_name)
-            .ok_or_else(|| "Missing kernel function 'gaussian_blur_h'".to_string())?;
+            .ok_or(Error::ShaderMissing("gaussian_blur_h".into()))?;
         let v_func = ctx.library().newFunctionWithName(v_name)
-            .ok_or_else(|| "Missing kernel function 'gaussian_blur_v'".to_string())?;
+            .ok_or(Error::ShaderMissing("gaussian_blur_v".into()))?;
 
         let h_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&h_func)
-            .map_err(|e| format!("Failed to create gaussian_blur_h pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("gaussian_blur_h: {e}")))?;
         let v_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&v_func)
-            .map_err(|e| format!("Failed to create gaussian_blur_v pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("gaussian_blur_v: {e}")))?;
 
         Ok(Self { h_pipeline, v_pipeline })
     }
 
-    /// Blurs `input` into `output` using a separable Gaussian kernel.
-    ///
-    /// Both textures must have identical dimensions. An intermediate R32Float
-    /// scratch texture is allocated internally.
-    ///
-    /// Synchronous: encodes both passes, commits, waits for GPU completion.
+    /// Blurs `input` into `output`. Synchronous.
     pub fn apply(
         &self,
         ctx:    &Context,
         input:  &Texture,
         output: &Texture,
         config: &GaussianConfig,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         let width  = input.width();
         let height = input.height();
 
-        // Horizontal pass writes here; vertical pass reads it
         let intermediate = Texture::intermediate_r32float(ctx.device(), width, height)?;
 
         let params = GaussianParams {
@@ -86,18 +81,18 @@ impl GaussianBlur {
         };
 
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
 
         {
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create horizontal blur encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
             Self::encode_pass(&self.h_pipeline, &encoder, input, &intermediate, &params, width, height);
             encoder.endEncoding();
         }
 
         {
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create vertical blur encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
             Self::encode_pass(&self.v_pipeline, &encoder, &intermediate, output, &params, width, height);
             encoder.endEncoding();
         }
@@ -108,10 +103,7 @@ impl GaussianBlur {
         Ok(())
     }
 
-    /// Encodes both blur passes into an existing command buffer without committing.
-    ///
-    /// The intermediate texture is returned inside [`GaussianEncodedState`]
-    /// to keep it alive until the command buffer completes.
+    /// Encodes both blur passes into `cmd_buf` without committing.
     pub fn encode(
         &self,
         ctx:     &Context,
@@ -119,7 +111,7 @@ impl GaussianBlur {
         input:   &Texture,
         output:  &Texture,
         config:  &GaussianConfig,
-    ) -> Result<GaussianEncodedState, String> {
+    ) -> Result<GaussianEncodedState> {
         let width  = input.width();
         let height = input.height();
 
@@ -134,14 +126,14 @@ impl GaussianBlur {
 
         {
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create horizontal blur encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
             Self::encode_pass(&self.h_pipeline, &encoder, input, &intermediate, &params, width, height);
             encoder.endEncoding();
         }
 
         {
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create vertical blur encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
             Self::encode_pass(&self.v_pipeline, &encoder, &intermediate, output, &params, width, height);
             encoder.endEncoding();
         }
@@ -158,7 +150,6 @@ impl GaussianBlur {
         width:    u32,
         height:   u32,
     ) {
-        // SAFETY: setBytes requires a valid pointer; encoder ops interact with device state.
         unsafe {
             encoder.setComputePipelineState(pipeline);
             encoder.setTexture_atIndex(Some(src.raw()), 0);
@@ -181,7 +172,10 @@ impl GaussianBlur {
     }
 }
 
-/// Intermediate state returned by [`GaussianBlur::encode`]. Keeps the scratch texture alive.
+unsafe impl Send for GaussianBlur {}
+unsafe impl Sync for GaussianBlur {}
+
+/// Keeps the intermediate texture alive until the command buffer completes.
 pub struct GaussianEncodedState {
     pub _intermediate: Texture,
 }

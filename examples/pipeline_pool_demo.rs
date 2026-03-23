@@ -1,13 +1,10 @@
 // examples/pipeline_pool_demo.rs
 //
-// Demonstrates the Pipeline builder and TexturePool infrastructure.
-//
 // Simulates a real-time camera pipeline:
-//   Frame → Bilateral denoise → Sobel edges → Canny → Hough lines
+//   Frame -> Bilateral denoise -> Sobel edges -> Canny -> Hough lines
 //
-// Shows the performance benefit of:
-//   1. Pipeline: batching multiple GPU dispatches into one command buffer
-//   2. TexturePool: recycling texture allocations across frames
+// Shows the performance benefit of Pipeline (batched dispatches) and
+// TexturePool (recycled texture allocations).
 //
 // Run with:
 //   cargo run --release --example pipeline_pool_demo -- path/to/image.png
@@ -30,7 +27,6 @@ fn main() {
     let (w, h) = img.dimensions();
     println!("Image: {}x{} ({})\n", w, h, path);
 
-    // ── Setup ──
     let ctx = Context::new().expect("No Metal GPU");
     let bilateral = BilateralFilter::new(&ctx).expect("Bilateral");
     let canny = CannyDetector::new(&ctx).expect("Canny");
@@ -40,26 +36,24 @@ fn main() {
 
     let texture = ctx.texture_gray8(img.as_raw(), w, h).expect("input texture");
 
-    // ════════════════════════════════════════════════════════════════
-    // Benchmark 1: Individual command buffers (no pooling, no pipeline)
-    // ════════════════════════════════════════════════════════════════
-    println!("═══ Without Pipeline/Pool (individual dispatch) ═══");
+    // Individual command buffers (no pooling, no pipeline)
+    println!("=== Without Pipeline/Pool (individual dispatch) ===");
     let n_frames = 10;
     let t_individual = Instant::now();
 
     for _ in 0..n_frames {
-        // Each call creates its own command buffer
         let filtered = ctx.texture_output_gray8(w, h).expect("output");
-        bilateral.apply(&ctx, &texture, &filtered, &BilateralConfig {
-            radius: 3, sigma_spatial: 5.0, sigma_range: 0.1,
-        }).expect("bilateral");
+        bilateral.apply(&ctx, &texture, &filtered, &BilateralConfig::new(3, 5.0, 0.1))
+            .expect("bilateral");
 
         let _sobel_result = sobel.compute(&ctx, &filtered).expect("sobel");
 
-        let _edges = canny.detect(&ctx, &texture, &CannyConfig {
-            low_threshold: 0.04, high_threshold: 0.12,
-            blur_sigma: 1.4, blur_radius: 4,
-        }).expect("canny");
+        let mut canny_cfg = CannyConfig::default();
+        canny_cfg.low_threshold = 0.04;
+        canny_cfg.high_threshold = 0.12;
+        canny_cfg.blur_sigma = 1.4;
+        canny_cfg.blur_radius = 4;
+        let _edges = canny.detect(&ctx, &texture, &canny_cfg).expect("canny");
 
         let binary = ctx.texture_output_gray8(w, h).expect("output");
         let _ = thresh.otsu(&ctx, &texture, &binary).expect("otsu");
@@ -73,33 +67,31 @@ fn main() {
     println!("  Per frame: {:.2} ms", per_frame_individual);
     println!("  FPS:       {:.1}\n", 1000.0 / per_frame_individual);
 
-    // ════════════════════════════════════════════════════════════════
-    // Benchmark 2: With TexturePool (recycled allocations)
-    // ════════════════════════════════════════════════════════════════
-    println!("═══ With TexturePool (recycled allocations) ═══");
+    // With TexturePool (recycled allocations)
+    println!("=== With TexturePool (recycled allocations) ===");
     let mut pool = TexturePool::new();
 
     let t_pooled = Instant::now();
 
     for _ in 0..n_frames {
         let filtered = pool.acquire_gray8(&ctx, w, h).expect("pooled output");
-        bilateral.apply(&ctx, &texture, &filtered, &BilateralConfig {
-            radius: 3, sigma_spatial: 5.0, sigma_range: 0.1,
-        }).expect("bilateral");
+        bilateral.apply(&ctx, &texture, &filtered, &BilateralConfig::new(3, 5.0, 0.1))
+            .expect("bilateral");
 
         let sobel_result = sobel.compute(&ctx, &filtered).expect("sobel");
 
-        let edges = canny.detect(&ctx, &texture, &CannyConfig {
-            low_threshold: 0.04, high_threshold: 0.12,
-            blur_sigma: 1.4, blur_radius: 4,
-        }).expect("canny");
+        let mut canny_cfg2 = CannyConfig::default();
+        canny_cfg2.low_threshold = 0.04;
+        canny_cfg2.high_threshold = 0.12;
+        canny_cfg2.blur_sigma = 1.4;
+        canny_cfg2.blur_radius = 4;
+        let edges = canny.detect(&ctx, &texture, &canny_cfg2).expect("canny");
 
         let binary = pool.acquire_gray8(&ctx, w, h).expect("pooled output");
         let _ = thresh.otsu(&ctx, &texture, &binary).expect("otsu");
 
         let _ = hist.compute(&ctx, &texture).expect("histogram");
 
-        // Return textures to pool
         pool.release(filtered);
         pool.release(sobel_result.grad_x);
         pool.release(sobel_result.grad_y);
@@ -122,10 +114,8 @@ fn main() {
     let speedup = per_frame_individual / per_frame_pooled;
     println!("  Speedup:   {:.2}x vs individual\n", speedup);
 
-    // ════════════════════════════════════════════════════════════════
     // Pipeline API demo (encode-only, single command buffer)
-    // ════════════════════════════════════════════════════════════════
-    println!("═══ Pipeline API Demo ═══");
+    println!("=== Pipeline API Demo ===");
     println!("  The Pipeline builder lets you batch multiple kernel");
     println!("  dispatches into one command buffer. Example usage:\n");
     println!("    let mut pipe = Pipeline::begin(&ctx)?;");
@@ -133,9 +123,10 @@ fn main() {
     println!("    // ... more encodes ...");
     println!("    let retained = pipe.commit_and_wait();\n");
 
-    // Demo: Pipeline API with GaussianBlur (which has encode())
     let blur = vx_vision::kernels::gaussian::GaussianBlur::new(&ctx).expect("Gaussian");
-    let blur_cfg = vx_vision::kernels::gaussian::GaussianConfig { sigma: 1.5, radius: 4 };
+    let mut blur_cfg = vx_vision::kernels::gaussian::GaussianConfig::default();
+    blur_cfg.sigma = 1.5;
+    blur_cfg.radius = 4;
 
     let t_pipe = Instant::now();
 
@@ -143,12 +134,10 @@ fn main() {
         let blurred = pool.acquire_r32float(&ctx, w, h).expect("pooled");
         let output = pool.acquire_gray8(&ctx, w, h).expect("pooled");
 
-        // Use Pipeline for explicit batching — single command buffer
         let pipe = vx_vision::Pipeline::begin(&ctx).expect("pipeline");
         let _state = blur.encode(&ctx, pipe.cmd_buf(), &texture, &blurred, &blur_cfg)
             .expect("encode blur");
 
-        // Commit and wait — all work in one command buffer
         let retained = pipe.commit_and_wait();
         pool.release_all(retained.into_iter());
 
@@ -161,8 +150,8 @@ fn main() {
     println!("  Pipeline + Pool: {:.2} ms/frame", per_frame_pipe);
     println!("  Pool hit rate:   {:.0}%\n", pool.hit_rate() * 100.0);
 
-    // ── Summary ──
-    println!("─── Summary ─────────────────────────────");
+    // Summary
+    println!("--- Summary ---");
     println!("Individual:      {:.2} ms/frame", per_frame_individual);
     println!("With Pool:       {:.2} ms/frame ({:.2}x faster)",
         per_frame_pooled, per_frame_individual / per_frame_pooled);

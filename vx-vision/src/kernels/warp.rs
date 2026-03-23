@@ -13,6 +13,7 @@ use objc2_metal::{
 };
 
 use crate::context::Context;
+use crate::error::{Error, Result};
 use crate::texture::Texture;
 use crate::types::{WarpAffineParams, WarpPerspectiveParams};
 
@@ -22,36 +23,37 @@ pub struct ImageWarp {
     perspective_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
+unsafe impl Send for ImageWarp {}
+unsafe impl Sync for ImageWarp {}
+
 impl ImageWarp {
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    pub fn new(ctx: &Context) -> Result<Self> {
         let aff_name  = objc2_foundation::ns_string!("warp_affine");
         let persp_name = objc2_foundation::ns_string!("warp_perspective");
 
         let aff_func = ctx.library().newFunctionWithName(aff_name)
-            .ok_or_else(|| "Missing kernel function 'warp_affine'".to_string())?;
+            .ok_or(Error::ShaderMissing("warp_affine".into()))?;
         let persp_func = ctx.library().newFunctionWithName(persp_name)
-            .ok_or_else(|| "Missing kernel function 'warp_perspective'".to_string())?;
+            .ok_or(Error::ShaderMissing("warp_perspective".into()))?;
 
         let affine_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&aff_func)
-            .map_err(|e| format!("Failed to create warp_affine pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("warp_affine: {e}")))?;
         let perspective_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&persp_func)
-            .map_err(|e| format!("Failed to create warp_perspective pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("warp_perspective: {e}")))?;
 
         Ok(Self { affine_pipeline, perspective_pipeline })
     }
 
-    /// Inverse affine warp (2x3 row-major: `[a, b, tx, c, d, ty]`).
-    ///
-    /// Maps output coordinates to input coordinates; out-of-bounds pixels are black.
+    /// Inverse affine warp (2x3 row-major). Out-of-bounds pixels are black.
     pub fn affine(
         &self,
         ctx:        &Context,
         input:      &Texture,
         output:     &Texture,
         inv_matrix: &[f32; 6],
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         let params = WarpAffineParams {
             width:      output.width(),
             height:     output.height(),
@@ -62,9 +64,9 @@ impl ImageWarp {
         };
 
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
         let encoder = cmd_buf.computeCommandEncoder()
-            .ok_or("Failed to create compute encoder")?;
+            .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         Self::encode_2d(&self.affine_pipeline, &encoder, input, output, &params as *const _ as *const c_void, mem::size_of::<WarpAffineParams>());
 
@@ -74,16 +76,14 @@ impl ImageWarp {
         Ok(())
     }
 
-    /// Inverse perspective warp (3x3 row-major, homogeneous).
-    ///
-    /// Maps output coordinates to input coordinates; out-of-bounds pixels are black.
+    /// Inverse perspective warp (3x3 row-major). Out-of-bounds pixels are black.
     pub fn perspective(
         &self,
         ctx:        &Context,
         input:      &Texture,
         output:     &Texture,
         inv_matrix: &[f32; 9],
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         let params = WarpPerspectiveParams {
             width:      output.width(),
             height:     output.height(),
@@ -95,15 +95,68 @@ impl ImageWarp {
         };
 
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
         let encoder = cmd_buf.computeCommandEncoder()
-            .ok_or("Failed to create compute encoder")?;
+            .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         Self::encode_2d(&self.perspective_pipeline, &encoder, input, output, &params as *const _ as *const c_void, mem::size_of::<WarpPerspectiveParams>());
 
         encoder.endEncoding();
         cmd_buf.commit();
         cmd_buf.waitUntilCompleted();
+        Ok(())
+    }
+
+    /// Encodes an affine warp without committing.
+    pub fn encode_affine(
+        &self,
+        cmd_buf:    &ProtocolObject<dyn MTLCommandBuffer>,
+        input:      &Texture,
+        output:     &Texture,
+        inv_matrix: &[f32; 6],
+    ) -> Result<()> {
+        let params = WarpAffineParams {
+            width:      output.width(),
+            height:     output.height(),
+            src_width:  input.width(),
+            src_height: input.height(),
+            m00: inv_matrix[0], m01: inv_matrix[1], m02: inv_matrix[2],
+            m10: inv_matrix[3], m11: inv_matrix[4], m12: inv_matrix[5],
+        };
+
+        let encoder = cmd_buf.computeCommandEncoder()
+            .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
+
+        Self::encode_2d(&self.affine_pipeline, &encoder, input, output, &params as *const _ as *const c_void, mem::size_of::<WarpAffineParams>());
+
+        encoder.endEncoding();
+        Ok(())
+    }
+
+    /// Encodes a perspective warp without committing.
+    pub fn encode_perspective(
+        &self,
+        cmd_buf:    &ProtocolObject<dyn MTLCommandBuffer>,
+        input:      &Texture,
+        output:     &Texture,
+        inv_matrix: &[f32; 9],
+    ) -> Result<()> {
+        let params = WarpPerspectiveParams {
+            width:      output.width(),
+            height:     output.height(),
+            src_width:  input.width(),
+            src_height: input.height(),
+            m00: inv_matrix[0], m01: inv_matrix[1], m02: inv_matrix[2],
+            m10: inv_matrix[3], m11: inv_matrix[4], m12: inv_matrix[5],
+            m20: inv_matrix[6], m21: inv_matrix[7], m22: inv_matrix[8],
+        };
+
+        let encoder = cmd_buf.computeCommandEncoder()
+            .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
+
+        Self::encode_2d(&self.perspective_pipeline, &encoder, input, output, &params as *const _ as *const c_void, mem::size_of::<WarpPerspectiveParams>());
+
+        encoder.endEncoding();
         Ok(())
     }
 

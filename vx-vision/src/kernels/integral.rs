@@ -13,8 +13,16 @@ use objc2_metal::{
 };
 
 use crate::context::Context;
+use crate::error::{Error, Result};
 use crate::texture::Texture;
 use crate::types::IntegralParams;
+
+/// Keeps the intermediate texture alive until the command buffer completes.
+pub struct IntegralEncodedState {
+    _intermediate: Texture,
+    /// The output integral image texture.
+    pub output: Texture,
+}
 
 /// Compiled integral image pipeline.
 pub struct IntegralImage {
@@ -22,34 +30,35 @@ pub struct IntegralImage {
     cols_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
+unsafe impl Send for IntegralImage {}
+unsafe impl Sync for IntegralImage {}
+
 impl IntegralImage {
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    pub fn new(ctx: &Context) -> Result<Self> {
         let rows_name = objc2_foundation::ns_string!("integral_rows");
         let cols_name = objc2_foundation::ns_string!("integral_cols");
 
         let rows_func = ctx.library().newFunctionWithName(rows_name)
-            .ok_or_else(|| "Missing kernel function 'integral_rows'".to_string())?;
+            .ok_or(Error::ShaderMissing("integral_rows".into()))?;
         let cols_func = ctx.library().newFunctionWithName(cols_name)
-            .ok_or_else(|| "Missing kernel function 'integral_cols'".to_string())?;
+            .ok_or(Error::ShaderMissing("integral_cols".into()))?;
 
         let rows_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&rows_func)
-            .map_err(|e| format!("Failed to create integral_rows pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("integral_rows: {e}")))?;
         let cols_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&cols_func)
-            .map_err(|e| format!("Failed to create integral_cols pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("integral_cols: {e}")))?;
 
         Ok(Self { rows_pipeline, cols_pipeline })
     }
 
-    /// Computes the integral image of a grayscale input.
-    ///
-    /// Returns an R32Float texture.
+    /// Computes the integral image. Returns an R32Float texture.
     pub fn compute(
         &self,
         ctx:   &Context,
         input: &Texture,
-    ) -> Result<Texture, String> {
+    ) -> Result<Texture> {
         let w = input.width();
         let h = input.height();
 
@@ -59,20 +68,18 @@ impl IntegralImage {
         let params = IntegralParams { width: w, height: h };
 
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
 
-        // Pass 1: prefix sum per row
         {
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create compute encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
             Self::encode_1d(&self.rows_pipeline, &encoder, input, &intermediate, &params, h as usize);
             encoder.endEncoding();
         }
 
-        // Pass 2: prefix sum per column
         {
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create compute encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
             Self::encode_1d(&self.cols_pipeline, &encoder, &intermediate, &output, &params, w as usize);
             encoder.endEncoding();
         }
@@ -81,6 +88,38 @@ impl IntegralImage {
         cmd_buf.waitUntilCompleted();
 
         Ok(output)
+    }
+
+    /// Encodes both passes without committing.
+    pub fn encode(
+        &self,
+        ctx:     &Context,
+        cmd_buf: &ProtocolObject<dyn MTLCommandBuffer>,
+        input:   &Texture,
+    ) -> Result<IntegralEncodedState> {
+        let w = input.width();
+        let h = input.height();
+
+        let intermediate = Texture::intermediate_r32float(ctx.device(), w, h)?;
+        let output       = Texture::intermediate_r32float(ctx.device(), w, h)?;
+
+        let params = IntegralParams { width: w, height: h };
+
+        {
+            let encoder = cmd_buf.computeCommandEncoder()
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
+            Self::encode_1d(&self.rows_pipeline, &encoder, input, &intermediate, &params, h as usize);
+            encoder.endEncoding();
+        }
+
+        {
+            let encoder = cmd_buf.computeCommandEncoder()
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
+            Self::encode_1d(&self.cols_pipeline, &encoder, &intermediate, &output, &params, w as usize);
+            encoder.endEncoding();
+        }
+
+        Ok(IntegralEncodedState { _intermediate: intermediate, output })
     }
 
     fn encode_1d(

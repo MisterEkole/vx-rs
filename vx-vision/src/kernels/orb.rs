@@ -14,14 +14,23 @@ use objc2_metal::{
 
 use vx_gpu::UnifiedBuffer;
 use crate::context::Context;
+use crate::error::{Error, Result};
 use crate::texture::Texture;
 use crate::types::{CornerPoint, ORBOutput, ORBParams};
 
 /// Configuration for the ORB descriptor extractor.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct OrbConfig {
     /// Circular patch radius (default 15 for a 31x31 patch).
     pub patch_radius: u32,
+}
+
+impl OrbConfig {
+    /// Creates a config with the given patch radius.
+    pub fn new(patch_radius: u32) -> Self {
+        Self { patch_radius }
+    }
 }
 
 impl Default for OrbConfig {
@@ -30,10 +39,13 @@ impl Default for OrbConfig {
     }
 }
 
-/// Compiled ORB descriptor pipeline. Reusable across frames.
+/// Compiled ORB descriptor pipeline.
 pub struct OrbDescriptor {
     pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
+
+unsafe impl Send for OrbDescriptor {}
+unsafe impl Sync for OrbDescriptor {}
 
 /// Result of a single ORB extraction pass.
 #[derive(Debug)]
@@ -43,25 +55,20 @@ pub struct OrbResult {
 }
 
 impl OrbDescriptor {
-    /// Creates the compute pipeline from the context's shader library.
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    /// Compiles the ORB descriptor pipeline.
+    pub fn new(ctx: &Context) -> Result<Self> {
         let name = objc2_foundation::ns_string!("orb_describe");
 
         let func = ctx.library().newFunctionWithName(name)
-            .ok_or_else(|| "Missing kernel function 'orb_describe'".to_string())?;
+            .ok_or(Error::ShaderMissing("orb_describe".into()))?;
 
         let pipeline = ctx.device().newComputePipelineStateWithFunction_error(&func)
-            .map_err(|e| format!("Failed to create ORB pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("orb_describe: {e}")))?;
 
         Ok(Self { pipeline })
     }
 
-    /// Computes ORB descriptors for a set of keypoints.
-    ///
-    /// `pattern` is 256 test pairs as `(dx1, dy1, dx2, dy2)`, flattened to 1024 `i32` values.
-    ///
-    /// Synchronous: encodes, commits, waits, then reads back.
-    /// For pipelined usage, see [`Self::encode`].
+    /// Computes ORB descriptors for keypoints. `pattern` is 1024 `i32` values (256 test pairs). Synchronous.
     pub fn compute(
         &self,
         ctx: &Context,
@@ -69,11 +76,11 @@ impl OrbDescriptor {
         keypoints: &[CornerPoint],
         pattern: &[i32],
         config: &OrbConfig,
-    ) -> Result<OrbResult, String> {
+    ) -> Result<OrbResult> {
         if keypoints.is_empty() {
             return Ok(OrbResult { descriptors: Vec::new() });
         }
-        assert_eq!(pattern.len(), 1024, "ORB pattern must be 1024 i32 values (256 pairs × 4)");
+        assert_eq!(pattern.len(), 1024, "ORB pattern must be 1024 i32 values (256 pairs x 4)");
 
         let n_keypoints = keypoints.len();
 
@@ -98,9 +105,9 @@ impl OrbDescriptor {
         let _pat_guard = pat_buf.gpu_guard();
 
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
         let encoder = cmd_buf.computeCommandEncoder()
-            .ok_or("Failed to create compute encoder")?;
+            .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         Self::encode_into(
             &self.pipeline, &encoder, texture,
@@ -119,9 +126,7 @@ impl OrbDescriptor {
         Ok(OrbResult { descriptors })
     }
 
-    /// Encodes ORB extraction into an existing compute encoder without committing.
-    ///
-    /// Typical chain: FAST -> Harris -> ORB -> commit.
+    /// Encodes ORB extraction without committing.
     pub fn encode(
         &self,
         ctx: &Context,
@@ -130,9 +135,9 @@ impl OrbDescriptor {
         keypoints: &[CornerPoint],
         pattern: &[i32],
         config: &OrbConfig,
-    ) -> Result<OrbEncodedBuffers, String> {
+    ) -> Result<OrbEncodedBuffers> {
         if keypoints.is_empty() {
-            return Err("Cannot encode ORB with zero keypoints".into());
+            return Err(Error::InvalidConfig("cannot encode ORB with zero keypoints".into()));
         }
         assert_eq!(pattern.len(), 1024, "ORB pattern must be 1024 i32 values");
 
@@ -167,14 +172,13 @@ impl OrbDescriptor {
         })
     }
 
-    /// Reads ORB results from buffers returned by [`Self::encode`].
-    ///
-    /// Only valid after the command buffer has completed.
+    /// Reads ORB results after the command buffer has completed.
     pub fn read_results(buffers: &OrbEncodedBuffers) -> OrbResult {
         let descriptors = buffers.descriptors.as_slice()[..buffers.n_keypoints].to_vec();
         OrbResult { descriptors }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn encode_into(
         pipeline: &ProtocolObject<dyn MTLComputePipelineState>,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
@@ -185,7 +189,6 @@ impl OrbDescriptor {
         params: &ORBParams,
         n_keypoints: usize,
     ) {
-        // SAFETY: setBytes requires a valid pointer; encoder ops interact with device state.
         unsafe {
             encoder.setComputePipelineState(pipeline);
             encoder.setTexture_atIndex(Some(texture.raw()), 0);
@@ -207,7 +210,7 @@ impl OrbDescriptor {
     }
 }
 
-/// Buffers returned by [`OrbDescriptor::encode`]. Keeps allocations alive until readback.
+/// Buffers returned by [`OrbDescriptor::encode`]. Must outlive the command buffer.
 pub struct OrbEncodedBuffers {
     pub keypoints:   UnifiedBuffer<CornerPoint>,
     pub descriptors: UnifiedBuffer<ORBOutput>,

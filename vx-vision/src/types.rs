@@ -390,3 +390,19 @@ pub struct CCLParams {
     pub height:    u32,
     pub threshold: f32,
 }
+
+/// GPU parameters for indirect dispatch argument setup.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct IndirectSetupParams {
+    pub threads_per_threadgroup: u32,
+}
+
+/// Indirect dispatch arguments (mirrors `MTLDispatchThreadgroupsIndirectArguments`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct IndirectArgs {
+    pub threadgroups_x: u32,
+    pub threadgroups_y: u32,
+    pub threadgroups_z: u32,
+}

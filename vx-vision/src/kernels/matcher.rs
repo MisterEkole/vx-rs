@@ -13,10 +13,12 @@ use objc2_metal::{
 };
 
 use crate::context::Context;
+use crate::error::{Error, Result};
 use crate::types::{MatcherParams, MatchResult};
 
 /// Configuration for brute-force matching.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct MatchConfig {
     /// Maximum accepted Hamming distance (0--256 for ORB).
     pub max_hamming: u32,
@@ -40,37 +42,33 @@ pub struct BruteMatcher {
 }
 
 impl BruteMatcher {
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    pub fn new(ctx: &Context) -> Result<Self> {
         let ham_name = objc2_foundation::ns_string!("brutematch_hamming");
         let ext_name = objc2_foundation::ns_string!("brutematch_extract");
 
         let ham_func = ctx.library().newFunctionWithName(ham_name)
-            .ok_or_else(|| "Missing kernel function 'brutematch_hamming'".to_string())?;
+            .ok_or(Error::ShaderMissing("brutematch_hamming".into()))?;
         let ext_func = ctx.library().newFunctionWithName(ext_name)
-            .ok_or_else(|| "Missing kernel function 'brutematch_extract'".to_string())?;
+            .ok_or(Error::ShaderMissing("brutematch_extract".into()))?;
 
         let hamming_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&ham_func)
-            .map_err(|e| format!("Failed to create brutematch_hamming pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("brutematch_hamming: {e}")))?;
         let extract_pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&ext_func)
-            .map_err(|e| format!("Failed to create brutematch_extract pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("brutematch_extract: {e}")))?;
 
         Ok(Self { hamming_pipeline, extract_pipeline })
     }
 
-    /// Matches two sets of ORB descriptors (256-bit = 8 x u32 each).
-    ///
-    /// `query_desc` and `train_desc` are flat `u32` arrays where every 8
-    /// consecutive values form one descriptor. Returns pairs passing both
-    /// the distance threshold and ratio test.
+    /// Matches ORB descriptors (8 x u32 each) using Hamming distance + ratio test.
     pub fn match_descriptors(
         &self,
         ctx:        &Context,
         query_desc: &[u32],
         train_desc: &[u32],
         config:     &MatchConfig,
-    ) -> Result<Vec<MatchResult>, String> {
+    ) -> Result<Vec<MatchResult>> {
         let n_query = (query_desc.len() / 8) as u32;
         let n_train = (train_desc.len() / 8) as u32;
 
@@ -91,7 +89,6 @@ impl BruteMatcher {
         let mut train_buf = vx_gpu::UnifiedBuffer::<u32>::new(ctx.device(), train_desc.len())?;
         train_buf.as_mut_slice().copy_from_slice(train_desc);
 
-        // Distance matrix: n_query x n_train, u16
         let dist_size = (n_query as usize) * (n_train as usize);
         let dist_buf = vx_gpu::UnifiedBuffer::<u16>::new(ctx.device(), dist_size)?;
 
@@ -99,12 +96,11 @@ impl BruteMatcher {
         let mut count_buf = vx_gpu::UnifiedBuffer::<u32>::new(ctx.device(), 1)?;
         count_buf.as_mut_slice()[0] = 0;
 
-        // Pass 1: Hamming distance matrix (2D dispatch over query x train)
         {
             let cmd_buf = ctx.queue().commandBuffer()
-                .ok_or("Failed to create command buffer")?;
+                .ok_or(Error::Gpu("failed to create command buffer".into()))?;
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create compute encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
             unsafe {
                 encoder.setComputePipelineState(&self.hamming_pipeline);
@@ -130,12 +126,11 @@ impl BruteMatcher {
             cmd_buf.waitUntilCompleted();
         }
 
-        // Pass 2: extract best match per query with ratio test
         {
             let cmd_buf = ctx.queue().commandBuffer()
-                .ok_or("Failed to create command buffer")?;
+                .ok_or(Error::Gpu("failed to create command buffer".into()))?;
             let encoder = cmd_buf.computeCommandEncoder()
-                .ok_or("Failed to create compute encoder")?;
+                .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
             unsafe {
                 encoder.setComputePipelineState(&self.extract_pipeline);
@@ -165,3 +160,6 @@ impl BruteMatcher {
         Ok(match_buf.as_slice()[..n_matches].to_vec())
     }
 }
+
+unsafe impl Send for BruteMatcher {}
+unsafe impl Sync for BruteMatcher {}

@@ -13,6 +13,7 @@ use objc2_metal::{
 };
 
 use crate::context::Context;
+use crate::error::{Error, Result};
 use crate::texture::Texture;
 use crate::types::ResizeParams;
 
@@ -22,24 +23,23 @@ pub struct ImageResize {
 }
 
 impl ImageResize {
-    pub fn new(ctx: &Context) -> Result<Self, String> {
+    pub fn new(ctx: &Context) -> Result<Self> {
         let name = objc2_foundation::ns_string!("resize_bilinear");
         let func = ctx.library().newFunctionWithName(name)
-            .ok_or_else(|| "Missing kernel function 'resize_bilinear'".to_string())?;
+            .ok_or(Error::ShaderMissing("resize_bilinear".into()))?;
         let pipeline = ctx.device()
             .newComputePipelineStateWithFunction_error(&func)
-            .map_err(|e| format!("Failed to create resize pipeline: {e}"))?;
+            .map_err(|e| Error::PipelineCompile(format!("resize_bilinear: {e}")))?;
         Ok(Self { pipeline })
     }
 
-    /// Resize `input` into `output` using bilinear interpolation.
-    /// Target dimensions are determined by `output`.
+    /// Resizes `input` into `output` via bilinear interpolation. Synchronous.
     pub fn apply(
         &self,
         ctx:    &Context,
         input:  &Texture,
         output: &Texture,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         let params = ResizeParams {
             src_width:  input.width(),
             src_height: input.height(),
@@ -48,9 +48,9 @@ impl ImageResize {
         };
 
         let cmd_buf = ctx.queue().commandBuffer()
-            .ok_or("Failed to create command buffer")?;
+            .ok_or(Error::Gpu("failed to create command buffer".into()))?;
         let encoder = cmd_buf.computeCommandEncoder()
-            .ok_or("Failed to create compute encoder")?;
+            .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         Self::encode_into(&self.pipeline, &encoder, input, output, &params);
 
@@ -60,7 +60,7 @@ impl ImageResize {
         Ok(())
     }
 
-    /// Encodes the resize into an existing compute encoder without committing.
+    /// Encodes the resize without committing.
     pub fn encode(
         &self,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
@@ -105,3 +105,6 @@ impl ImageResize {
         }
     }
 }
+
+unsafe impl Send for ImageResize {}
+unsafe impl Sync for ImageResize {}
