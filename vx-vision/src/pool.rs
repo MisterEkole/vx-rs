@@ -8,7 +8,7 @@ use crate::texture::{Texture, TextureFormat};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct PoolKey {
-    width:  u32,
+    width: u32,
     height: u32,
     format: TextureFormat,
 }
@@ -43,45 +43,34 @@ impl TexturePool {
     }
 
     /// Acquires an R8Unorm texture, reusing a cached one if available.
-    pub fn acquire_gray8(
-        &mut self,
-        ctx:    &Context,
-        width:  u32,
-        height: u32,
-    ) -> Result<Texture> {
+    pub fn acquire_gray8(&mut self, ctx: &Context, width: u32, height: u32) -> Result<Texture> {
         self.acquire(ctx, width, height, TextureFormat::R8Unorm)
     }
 
     /// Acquires an R32Float texture, reusing a cached one if available.
-    pub fn acquire_r32float(
-        &mut self,
-        ctx:    &Context,
-        width:  u32,
-        height: u32,
-    ) -> Result<Texture> {
+    pub fn acquire_r32float(&mut self, ctx: &Context, width: u32, height: u32) -> Result<Texture> {
         self.acquire(ctx, width, height, TextureFormat::R32Float)
     }
 
     /// Acquires an RGBA8Unorm texture, reusing a cached one if available.
-    pub fn acquire_rgba8(
-        &mut self,
-        ctx:    &Context,
-        width:  u32,
-        height: u32,
-    ) -> Result<Texture> {
+    pub fn acquire_rgba8(&mut self, ctx: &Context, width: u32, height: u32) -> Result<Texture> {
         self.acquire(ctx, width, height, TextureFormat::RGBA8Unorm)
     }
 
     /// Acquires a texture with the given format, reusing a cached one if available.
     pub fn acquire(
         &mut self,
-        ctx:    &Context,
-        width:  u32,
+        ctx: &Context,
+        width: u32,
         height: u32,
         format: TextureFormat,
     ) -> Result<Texture> {
         self.acquires += 1;
-        let key = PoolKey { width, height, format };
+        let key = PoolKey {
+            width,
+            height,
+            format,
+        };
 
         if let Some(bucket) = self.buckets.get_mut(&key) {
             if let Some(tex) = bucket.pop() {
@@ -96,7 +85,7 @@ impl TexturePool {
     /// Returns a texture to the pool for reuse. Contents are not cleared.
     pub fn release(&mut self, tex: Texture) {
         let key = PoolKey {
-            width:  tex.width(),
+            width: tex.width(),
             height: tex.height(),
             format: tex.format(),
         };
@@ -136,8 +125,11 @@ impl TexturePool {
 
     /// Returns the cache hit rate in `[0.0, 1.0]`.
     pub fn hit_rate(&self) -> f64 {
-        if self.acquires == 0 { 0.0 }
-        else { self.hits as f64 / self.acquires as f64 }
+        if self.acquires == 0 {
+            0.0
+        } else {
+            self.hits as f64 / self.acquires as f64
+        }
     }
 
     fn create_texture(

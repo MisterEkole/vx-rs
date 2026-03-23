@@ -20,17 +20,11 @@ pub struct UnifiedBuffer<T: Pod> {
 
 impl<T: Pod> UnifiedBuffer<T> {
     /// Allocates a shared buffer for `count` elements of `T`.
-    pub fn new(
-        device: &ProtocolObject<dyn MTLDevice>,
-        count: usize,
-    ) -> Result<Self, String> {
+    pub fn new(device: &ProtocolObject<dyn MTLDevice>, count: usize) -> Result<Self, String> {
         let size = mem::size_of::<T>() * count;
-        let raw =device.newBufferWithLength_options(
-                size,
-                MTLResourceOptions::StorageModeShared,
-            )
-        
-        .ok_or_else(|| format!("Failed to allocate {} byte shared buffer", size))?;
+        let raw = device
+            .newBufferWithLength_options(size, MTLResourceOptions::StorageModeShared)
+            .ok_or_else(|| format!("Failed to allocate {} byte shared buffer", size))?;
 
         Ok(Self {
             raw,

@@ -24,32 +24,24 @@ impl Context {
     /// Initializes the default Metal device and loads the embedded shader library.
     #[must_use = "contains the GPU context needed for all operations"]
     pub fn new() -> Result<Self> {
-        let device = vx_gpu::default_device()
-            .ok_or(Error::DeviceNotFound)?;
+        let device = vx_gpu::default_device().ok_or(Error::DeviceNotFound)?;
         let queue = vx_gpu::new_queue(&device)?;
         let library = crate::load_library(&device)?;
 
-        Ok(Self { device, queue, library })
+        Ok(Self {
+            device,
+            queue,
+            library,
+        })
     }
 
     /// Creates an R8Unorm texture from grayscale pixel data.
-    pub fn texture_gray8(
-       
-        &self,
-        pixels: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<Texture> {
+    pub fn texture_gray8(&self, pixels: &[u8], width: u32, height: u32) -> Result<Texture> {
         Texture::from_gray8(&self.device, pixels, width, height)
     }
 
     /// Creates an R32Float texture from `f32` data.
-    pub fn texture_r32float(
-        &self,
-        data:   &[f32],
-        width:  u32,
-        height: u32,
-    ) -> Result<Texture> {
+    pub fn texture_r32float(&self, data: &[f32], width: u32, height: u32) -> Result<Texture> {
         Texture::from_r32float(&self.device, data, width, height)
     }
 
@@ -59,12 +51,7 @@ impl Context {
     }
 
     /// Creates an RGBA8Unorm texture from 4-channel pixel data.
-    pub fn texture_rgba8(
-        &self,
-        pixels: &[u8],
-        width:  u32,
-        height: u32,
-    ) -> Result<Texture> {
+    pub fn texture_rgba8(&self, pixels: &[u8], width: u32, height: u32) -> Result<Texture> {
         Texture::from_rgba8(&self.device, pixels, width, height)
     }
 

@@ -2,11 +2,11 @@
 
 use crate::context::Context;
 use crate::error::Result;
+use crate::kernels::dog::{DoGConfig, DoGDetector};
+use crate::kernels::gaussian::GaussianBlur;
+use crate::kernels::pyramid::PyramidBuilder;
 use crate::texture::Texture;
 use crate::types::DoGKeypoint;
-use crate::kernels::gaussian::GaussianBlur;
-use crate::kernels::dog::{DoGDetector, DoGConfig};
-use crate::kernels::pyramid::PyramidBuilder;
 
 /// SIFT feature with position, scale, orientation, and 128-dim descriptor.
 #[derive(Clone, Debug)]
@@ -58,8 +58,8 @@ impl Default for SiftConfig {
 
 /// SIFT feature detection and description pipeline.
 pub struct SiftPipeline {
-    blur:    GaussianBlur,
-    dog:     DoGDetector,
+    blur: GaussianBlur,
+    dog: DoGDetector,
     pyramid: PyramidBuilder,
 }
 
@@ -74,8 +74,8 @@ impl SiftPipeline {
     /// Detects and describes SIFT features in a grayscale image.
     pub fn detect_and_describe(
         &self,
-        ctx:    &Context,
-        input:  &Texture,
+        ctx: &Context,
+        input: &Texture,
         config: &SiftConfig,
     ) -> Result<Vec<SiftFeature>> {
         let w = input.width();
@@ -99,7 +99,6 @@ impl SiftPipeline {
         }
 
         for (oct, oct_input) in octave_inputs.iter().enumerate().take(n_octaves) {
-
             let dog_config = DoGConfig {
                 n_levels: config.n_levels + 1,
                 base_sigma: config.base_sigma,
@@ -122,7 +121,8 @@ impl SiftPipeline {
 
         let img_data = input.read_gray8();
 
-        let features: Vec<SiftFeature> = all_keypoints.iter()
+        let features: Vec<SiftFeature> = all_keypoints
+            .iter()
             .filter_map(|(kp, octave)| {
                 let scale_factor = (1 << octave) as f32;
                 let x = kp.position[0] * scale_factor;
@@ -133,12 +133,16 @@ impl SiftPipeline {
                     return None;
                 }
 
-                let orientation = compute_orientation(
-                    &img_data, w, h, x, y, sigma * 1.5,
-                );
+                let orientation = compute_orientation(&img_data, w, h, x, y, sigma * 1.5);
 
                 let descriptor = compute_descriptor(
-                    &img_data, w, h, x, y, sigma, orientation,
+                    &img_data,
+                    w,
+                    h,
+                    x,
+                    y,
+                    sigma,
+                    orientation,
                     config.descriptor_radius,
                 );
 
@@ -158,8 +162,8 @@ impl SiftPipeline {
     /// Detects keypoints without computing descriptors.
     pub fn detect(
         &self,
-        ctx:    &Context,
-        input:  &Texture,
+        ctx: &Context,
+        input: &Texture,
         config: &SiftConfig,
     ) -> Result<Vec<DoGKeypoint>> {
         let dog_config = DoGConfig {
@@ -225,10 +229,7 @@ pub struct SiftMatch {
     pub ratio: f32,
 }
 
-fn compute_orientation(
-    img: &[u8], w: u32, h: u32,
-    x: f32, y: f32, sigma: f32,
-) -> f32 {
+fn compute_orientation(img: &[u8], w: u32, h: u32, x: f32, y: f32, sigma: f32) -> f32 {
     let mut hist = [0.0f32; 36];
     let radius = (sigma * 3.0).ceil() as i32;
     let xi = x as i32;
@@ -244,15 +245,15 @@ fn compute_orientation(
             }
 
             let gx = img[(py as usize) * (w as usize) + (px as usize + 1)] as f32
-                   - img[(py as usize) * (w as usize) + (px as usize - 1)] as f32;
+                - img[(py as usize) * (w as usize) + (px as usize - 1)] as f32;
             let gy = img[((py + 1) as usize) * (w as usize) + px as usize] as f32
-                   - img[((py - 1) as usize) * (w as usize) + px as usize] as f32;
+                - img[((py - 1) as usize) * (w as usize) + px as usize] as f32;
 
             let mag = (gx * gx + gy * gy).sqrt();
             let angle = gy.atan2(gx); // -pi to pi
             let weight = (-(dx * dx + dy * dy) as f32 * inv_2s2).exp();
 
-                    let deg = (angle.to_degrees() + 360.0) % 360.0;
+            let deg = (angle.to_degrees() + 360.0) % 360.0;
             let bin = (deg / 10.0) as usize % 36;
             hist[bin] += mag * weight;
         }
@@ -272,9 +273,14 @@ fn compute_orientation(
 
 #[allow(clippy::too_many_arguments)]
 fn compute_descriptor(
-    img: &[u8], w: u32, h: u32,
-    x: f32, y: f32, sigma: f32,
-    orientation: f32, radius: f32,
+    img: &[u8],
+    w: u32,
+    h: u32,
+    x: f32,
+    y: f32,
+    sigma: f32,
+    orientation: f32,
+    radius: f32,
 ) -> [f32; 128] {
     let mut desc = [0.0f32; 128];
     let cos_t = orientation.cos();
@@ -292,7 +298,7 @@ fn compute_descriptor(
                 continue;
             }
 
-            let rx =  (dx as f32) * cos_t + (dy as f32) * sin_t;
+            let rx = (dx as f32) * cos_t + (dy as f32) * sin_t;
             let ry = -(dx as f32) * sin_t + (dy as f32) * cos_t;
 
             let bx = (rx / bin_size + 2.0) as i32;
@@ -303,9 +309,9 @@ fn compute_descriptor(
             }
 
             let gx = img[(py as usize) * (w as usize) + (px as usize + 1)] as f32
-                   - img[(py as usize) * (w as usize) + (px as usize - 1)] as f32;
+                - img[(py as usize) * (w as usize) + (px as usize - 1)] as f32;
             let gy = img[((py + 1) as usize) * (w as usize) + px as usize] as f32
-                   - img[((py - 1) as usize) * (w as usize) + px as usize] as f32;
+                - img[((py - 1) as usize) * (w as usize) + px as usize] as f32;
 
             let mag = (gx * gx + gy * gy).sqrt();
             let angle = gy.atan2(gx) - orientation;

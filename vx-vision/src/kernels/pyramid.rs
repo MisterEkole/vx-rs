@@ -7,9 +7,8 @@ use std::mem;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLComputeCommandEncoder, MTLComputePipelineState, MTLDevice,
-    MTLLibrary, MTLSize,
+    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLDevice, MTLLibrary, MTLSize,
 };
 
 use crate::context::Context;
@@ -25,26 +24,26 @@ pub struct PyramidBuilder {
 impl PyramidBuilder {
     pub fn new(ctx: &Context) -> Result<Self> {
         let name = objc2_foundation::ns_string!("pyramid_downsample");
-        let func = ctx.library().newFunctionWithName(name)
+        let func = ctx
+            .library()
+            .newFunctionWithName(name)
             .ok_or(Error::ShaderMissing("pyramid_downsample".into()))?;
-        let pipeline = ctx.device()
+        let pipeline = ctx
+            .device()
             .newComputePipelineStateWithFunction_error(&func)
             .map_err(|e| Error::PipelineCompile(format!("pyramid_downsample: {e}")))?;
         Ok(Self { pipeline })
     }
 
     /// Builds `n_levels` pyramid levels. Returns levels `1..n_levels`.
-    pub fn build(
-        &self,
-        ctx:      &Context,
-        input:    &Texture,
-        n_levels: usize,
-    ) -> Result<Vec<Texture>> {
+    pub fn build(&self, ctx: &Context, input: &Texture, n_levels: usize) -> Result<Vec<Texture>> {
         if n_levels <= 1 {
             return Ok(Vec::new());
         }
 
-        let cmd_buf = ctx.queue().commandBuffer()
+        let cmd_buf = ctx
+            .queue()
+            .commandBuffer()
             .ok_or(Error::Gpu("failed to create command buffer".into()))?;
 
         let mut src_w = input.width();
@@ -58,17 +57,26 @@ impl PyramidBuilder {
 
             let output = Texture::output_gray8(ctx.device(), dst_w, dst_h)?;
 
-            let encoder = cmd_buf.computeCommandEncoder()
+            let encoder = cmd_buf
+                .computeCommandEncoder()
                 .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
             let params = PyramidParams {
-                src_width:  src_w,
+                src_width: src_w,
                 src_height: src_h,
-                dst_width:  dst_w,
+                dst_width: dst_w,
                 dst_height: dst_h,
             };
 
-            Self::encode_pass(&self.pipeline, &encoder, prev_tex, &output, &params, dst_w, dst_h);
+            Self::encode_pass(
+                &self.pipeline,
+                &encoder,
+                prev_tex,
+                &output,
+                &params,
+                dst_w,
+                dst_h,
+            );
             encoder.endEncoding();
 
             levels.push(output);
@@ -84,25 +92,31 @@ impl PyramidBuilder {
     }
 
     /// Downsample a single level to half resolution.
-    pub fn downsample(
-        &self,
-        ctx:    &Context,
-        input:  &Texture,
-        output: &Texture,
-    ) -> Result<()> {
+    pub fn downsample(&self, ctx: &Context, input: &Texture, output: &Texture) -> Result<()> {
         let params = PyramidParams {
-            src_width:  input.width(),
+            src_width: input.width(),
             src_height: input.height(),
-            dst_width:  output.width(),
+            dst_width: output.width(),
             dst_height: output.height(),
         };
 
-        let cmd_buf = ctx.queue().commandBuffer()
+        let cmd_buf = ctx
+            .queue()
+            .commandBuffer()
             .ok_or(Error::Gpu("failed to create command buffer".into()))?;
-        let encoder = cmd_buf.computeCommandEncoder()
+        let encoder = cmd_buf
+            .computeCommandEncoder()
             .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
-        Self::encode_pass(&self.pipeline, &encoder, input, output, &params, output.width(), output.height());
+        Self::encode_pass(
+            &self.pipeline,
+            &encoder,
+            input,
+            output,
+            &params,
+            output.width(),
+            output.height(),
+        );
 
         encoder.endEncoding();
         cmd_buf.commit();
@@ -112,12 +126,12 @@ impl PyramidBuilder {
 
     fn encode_pass(
         pipeline: &ProtocolObject<dyn MTLComputePipelineState>,
-        encoder:  &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        src:      &Texture,
-        dst:      &Texture,
-        params:   &PyramidParams,
-        width:    u32,
-        height:   u32,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        src: &Texture,
+        dst: &Texture,
+        params: &PyramidParams,
+        width: u32,
+        height: u32,
     ) {
         unsafe {
             encoder.setComputePipelineState(pipeline);
@@ -129,12 +143,20 @@ impl PyramidBuilder {
                 0,
             );
 
-            let tew    = pipeline.threadExecutionWidth();
+            let tew = pipeline.threadExecutionWidth();
             let max_tg = pipeline.maxTotalThreadsPerThreadgroup();
-            let tg_h   = (max_tg / tew).max(1);
+            let tg_h = (max_tg / tew).max(1);
 
-            let grid    = MTLSize { width: width as usize,  height: height as usize, depth: 1 };
-            let tg_size = MTLSize { width: tew,             height: tg_h,            depth: 1 };
+            let grid = MTLSize {
+                width: width as usize,
+                height: height as usize,
+                depth: 1,
+            };
+            let tg_size = MTLSize {
+                width: tew,
+                height: tg_h,
+                depth: 1,
+            };
 
             encoder.dispatchThreads_threadsPerThreadgroup(grid, tg_size);
         }

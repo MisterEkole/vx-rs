@@ -7,15 +7,14 @@ use std::mem;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLComputeCommandEncoder, MTLComputePipelineState, MTLDevice,
-    MTLLibrary, MTLSize,
+    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLDevice, MTLLibrary, MTLSize,
 };
 
-use vx_gpu::UnifiedBuffer;
 use crate::context::Context;
 use crate::error::{Error, Result};
 use crate::types::{CornerPoint, NMSParams};
+use vx_gpu::UnifiedBuffer;
 
 /// Configuration for the NMS suppressor.
 #[non_exhaustive]
@@ -51,10 +50,14 @@ impl NmsSuppressor {
     pub fn new(ctx: &Context) -> Result<Self> {
         let name = objc2_foundation::ns_string!("nms_suppress");
 
-        let func = ctx.library().newFunctionWithName(name)
+        let func = ctx
+            .library()
+            .newFunctionWithName(name)
             .ok_or(Error::ShaderMissing("nms_suppress".into()))?;
 
-        let pipeline = ctx.device().newComputePipelineStateWithFunction_error(&func)
+        let pipeline = ctx
+            .device()
+            .newComputePipelineStateWithFunction_error(&func)
             .map_err(|e| Error::PipelineCompile(format!("nms_suppress: {e}")))?;
 
         Ok(Self { pipeline })
@@ -65,7 +68,7 @@ impl NmsSuppressor {
         &self,
         ctx: &Context,
         corners: &[CornerPoint],
-        config:  &NmsConfig,
+        config: &NmsConfig,
     ) -> Result<Vec<CornerPoint>> {
         if corners.is_empty() {
             return Ok(Vec::new());
@@ -73,31 +76,40 @@ impl NmsSuppressor {
 
         let n = corners.len();
 
-        let mut input_buf: UnifiedBuffer<CornerPoint> =
-            UnifiedBuffer::new(ctx.device(), n)?;
+        let mut input_buf: UnifiedBuffer<CornerPoint> = UnifiedBuffer::new(ctx.device(), n)?;
         input_buf.write(corners);
 
-        let output_buf: UnifiedBuffer<CornerPoint> =
-            UnifiedBuffer::new(ctx.device(), n)?;
+        let output_buf: UnifiedBuffer<CornerPoint> = UnifiedBuffer::new(ctx.device(), n)?;
 
         let mut count_buf: UnifiedBuffer<u32> = UnifiedBuffer::new(ctx.device(), 1)?;
         count_buf.write(&[0u32]);
 
         let params = NMSParams {
-            n_corners:    n as u32,
+            n_corners: n as u32,
             min_distance: config.min_distance,
         };
 
-        let _in_guard  = input_buf.gpu_guard();
+        let _in_guard = input_buf.gpu_guard();
         let _out_guard = output_buf.gpu_guard();
-        let _ct_guard  = count_buf.gpu_guard();
+        let _ct_guard = count_buf.gpu_guard();
 
-        let cmd_buf = ctx.queue().commandBuffer()
+        let cmd_buf = ctx
+            .queue()
+            .commandBuffer()
             .ok_or(Error::Gpu("failed to create command buffer".into()))?;
-        let encoder = cmd_buf.computeCommandEncoder()
+        let encoder = cmd_buf
+            .computeCommandEncoder()
             .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
-        Self::encode_into(&self.pipeline, &encoder, &input_buf, &output_buf, &count_buf, &params, n);
+        Self::encode_into(
+            &self.pipeline,
+            &encoder,
+            &input_buf,
+            &output_buf,
+            &count_buf,
+            &params,
+            n,
+        );
 
         encoder.endEncoding();
         cmd_buf.commit();
@@ -114,35 +126,48 @@ impl NmsSuppressor {
     /// Encodes NMS without committing.
     pub fn encode(
         &self,
-        ctx:     &Context,
+        ctx: &Context,
         encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
         corners: &[CornerPoint],
-        config:  &NmsConfig,
+        config: &NmsConfig,
     ) -> Result<NmsEncodedBuffers> {
         if corners.is_empty() {
-            return Err(Error::InvalidConfig("cannot encode NMS with zero corners".into()));
+            return Err(Error::InvalidConfig(
+                "cannot encode NMS with zero corners".into(),
+            ));
         }
 
         let n = corners.len();
 
-        let mut input_buf: UnifiedBuffer<CornerPoint> =
-            UnifiedBuffer::new(ctx.device(), n)?;
+        let mut input_buf: UnifiedBuffer<CornerPoint> = UnifiedBuffer::new(ctx.device(), n)?;
         input_buf.write(corners);
 
-        let output_buf: UnifiedBuffer<CornerPoint> =
-            UnifiedBuffer::new(ctx.device(), n)?;
+        let output_buf: UnifiedBuffer<CornerPoint> = UnifiedBuffer::new(ctx.device(), n)?;
 
         let mut count_buf: UnifiedBuffer<u32> = UnifiedBuffer::new(ctx.device(), 1)?;
         count_buf.write(&[0u32]);
 
         let params = NMSParams {
-            n_corners:    n as u32,
+            n_corners: n as u32,
             min_distance: config.min_distance,
         };
 
-        Self::encode_into(&self.pipeline, encoder, &input_buf, &output_buf, &count_buf, &params, n);
+        Self::encode_into(
+            &self.pipeline,
+            encoder,
+            &input_buf,
+            &output_buf,
+            &count_buf,
+            &params,
+            n,
+        );
 
-        Ok(NmsEncodedBuffers { input: input_buf, output: output_buf, count: count_buf, n_input: n })
+        Ok(NmsEncodedBuffers {
+            input: input_buf,
+            output: output_buf,
+            count: count_buf,
+            n_input: n,
+        })
     }
 
     /// Reads surviving corners after the command buffer has completed.
@@ -152,28 +177,36 @@ impl NmsSuppressor {
     }
 
     fn encode_into(
-        pipeline:   &ProtocolObject<dyn MTLComputePipelineState>,
-        encoder:    &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        input_buf:  &UnifiedBuffer<CornerPoint>,
+        pipeline: &ProtocolObject<dyn MTLComputePipelineState>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        input_buf: &UnifiedBuffer<CornerPoint>,
         output_buf: &UnifiedBuffer<CornerPoint>,
-        count_buf:  &UnifiedBuffer<u32>,
-        params:     &NMSParams,
-        n:          usize,
+        count_buf: &UnifiedBuffer<u32>,
+        params: &NMSParams,
+        n: usize,
     ) {
         unsafe {
             encoder.setComputePipelineState(pipeline);
-            encoder.setBuffer_offset_atIndex(Some(input_buf.metal_buffer()),  0, 0);
+            encoder.setBuffer_offset_atIndex(Some(input_buf.metal_buffer()), 0, 0);
             encoder.setBuffer_offset_atIndex(Some(output_buf.metal_buffer()), 0, 1);
-            encoder.setBuffer_offset_atIndex(Some(count_buf.metal_buffer()),  0, 2);
+            encoder.setBuffer_offset_atIndex(Some(count_buf.metal_buffer()), 0, 2);
             encoder.setBytes_length_atIndex(
                 NonNull::new_unchecked(params as *const NMSParams as *mut c_void),
                 mem::size_of::<NMSParams>(),
                 3,
             );
 
-            let tew     = pipeline.threadExecutionWidth();
-            let grid    = MTLSize { width: n,   height: 1, depth: 1 };
-            let tg_size = MTLSize { width: tew, height: 1, depth: 1 };
+            let tew = pipeline.threadExecutionWidth();
+            let grid = MTLSize {
+                width: n,
+                height: 1,
+                depth: 1,
+            };
+            let tg_size = MTLSize {
+                width: tew,
+                height: 1,
+                depth: 1,
+            };
 
             encoder.dispatchThreads_threadsPerThreadgroup(grid, tg_size);
         }
@@ -182,8 +215,8 @@ impl NmsSuppressor {
 
 /// Buffers returned by [`NmsSuppressor::encode`].
 pub struct NmsEncodedBuffers {
-    pub input:   UnifiedBuffer<CornerPoint>,
-    pub output:  UnifiedBuffer<CornerPoint>,
-    pub count:   UnifiedBuffer<u32>,
+    pub input: UnifiedBuffer<CornerPoint>,
+    pub output: UnifiedBuffer<CornerPoint>,
+    pub count: UnifiedBuffer<u32>,
     pub n_input: usize,
 }

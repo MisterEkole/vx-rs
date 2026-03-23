@@ -46,14 +46,18 @@ fn main() {
 
         let status = Command::new("xcrun")
             .args([
-                "-sdk", "macosx", "metal",
+                "-sdk",
+                "macosx",
+                "metal",
                 "-c",
-                "-target", "air64-apple-macos14.0",
+                "-target",
+                "air64-apple-macos14.0",
                 "-std=metal3.1",
                 "-O2",
                 "-Wno-unused-variable",
                 metal_path.to_str().unwrap(),
-                "-o", air_path.to_str().unwrap(),
+                "-o",
+                air_path.to_str().unwrap(),
             ])
             .status()
             .expect("Failed to invoke `xcrun metal` — is Xcode installed?");

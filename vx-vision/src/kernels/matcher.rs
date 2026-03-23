@@ -7,14 +7,13 @@ use std::mem;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLComputeCommandEncoder, MTLComputePipelineState, MTLDevice,
-    MTLLibrary, MTLSize,
+    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLDevice, MTLLibrary, MTLSize,
 };
 
 use crate::context::Context;
 use crate::error::{Error, Result};
-use crate::types::{MatcherParams, MatchResult};
+use crate::types::{MatchResult, MatcherParams};
 
 /// Configuration for brute-force matching.
 #[derive(Clone, Debug)]
@@ -46,28 +45,37 @@ impl BruteMatcher {
         let ham_name = objc2_foundation::ns_string!("brutematch_hamming");
         let ext_name = objc2_foundation::ns_string!("brutematch_extract");
 
-        let ham_func = ctx.library().newFunctionWithName(ham_name)
+        let ham_func = ctx
+            .library()
+            .newFunctionWithName(ham_name)
             .ok_or(Error::ShaderMissing("brutematch_hamming".into()))?;
-        let ext_func = ctx.library().newFunctionWithName(ext_name)
+        let ext_func = ctx
+            .library()
+            .newFunctionWithName(ext_name)
             .ok_or(Error::ShaderMissing("brutematch_extract".into()))?;
 
-        let hamming_pipeline = ctx.device()
+        let hamming_pipeline = ctx
+            .device()
             .newComputePipelineStateWithFunction_error(&ham_func)
             .map_err(|e| Error::PipelineCompile(format!("brutematch_hamming: {e}")))?;
-        let extract_pipeline = ctx.device()
+        let extract_pipeline = ctx
+            .device()
             .newComputePipelineStateWithFunction_error(&ext_func)
             .map_err(|e| Error::PipelineCompile(format!("brutematch_extract: {e}")))?;
 
-        Ok(Self { hamming_pipeline, extract_pipeline })
+        Ok(Self {
+            hamming_pipeline,
+            extract_pipeline,
+        })
     }
 
     /// Matches ORB descriptors (8 x u32 each) using Hamming distance + ratio test.
     pub fn match_descriptors(
         &self,
-        ctx:        &Context,
+        ctx: &Context,
         query_desc: &[u32],
         train_desc: &[u32],
-        config:     &MatchConfig,
+        config: &MatchConfig,
     ) -> Result<Vec<MatchResult>> {
         let n_query = (query_desc.len() / 8) as u32;
         let n_train = (train_desc.len() / 8) as u32;
@@ -79,7 +87,7 @@ impl BruteMatcher {
         let params = MatcherParams {
             n_query,
             n_train,
-            max_hamming:  config.max_hamming,
+            max_hamming: config.max_hamming,
             ratio_thresh: config.ratio_thresh,
         };
 
@@ -97,27 +105,38 @@ impl BruteMatcher {
         count_buf.as_mut_slice()[0] = 0;
 
         {
-            let cmd_buf = ctx.queue().commandBuffer()
+            let cmd_buf = ctx
+                .queue()
+                .commandBuffer()
                 .ok_or(Error::Gpu("failed to create command buffer".into()))?;
-            let encoder = cmd_buf.computeCommandEncoder()
+            let encoder = cmd_buf
+                .computeCommandEncoder()
                 .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
             unsafe {
                 encoder.setComputePipelineState(&self.hamming_pipeline);
                 encoder.setBuffer_offset_atIndex(Some(query_buf.metal_buffer()), 0, 0);
                 encoder.setBuffer_offset_atIndex(Some(train_buf.metal_buffer()), 0, 1);
-                encoder.setBuffer_offset_atIndex(Some(dist_buf.metal_buffer()),  0, 2);
+                encoder.setBuffer_offset_atIndex(Some(dist_buf.metal_buffer()), 0, 2);
                 encoder.setBytes_length_atIndex(
                     NonNull::new_unchecked(&params as *const MatcherParams as *mut c_void),
                     mem::size_of::<MatcherParams>(),
                     3,
                 );
 
-                let tew    = self.hamming_pipeline.threadExecutionWidth();
+                let tew = self.hamming_pipeline.threadExecutionWidth();
                 let max_tg = self.hamming_pipeline.maxTotalThreadsPerThreadgroup();
-                let tg_h   = (max_tg / tew).max(1);
-                let grid    = MTLSize { width: n_query as usize, height: n_train as usize, depth: 1 };
-                let tg_size = MTLSize { width: tew,              height: tg_h,             depth: 1 };
+                let tg_h = (max_tg / tew).max(1);
+                let grid = MTLSize {
+                    width: n_query as usize,
+                    height: n_train as usize,
+                    depth: 1,
+                };
+                let tg_size = MTLSize {
+                    width: tew,
+                    height: tg_h,
+                    depth: 1,
+                };
                 encoder.dispatchThreads_threadsPerThreadgroup(grid, tg_size);
             }
 
@@ -127,14 +146,17 @@ impl BruteMatcher {
         }
 
         {
-            let cmd_buf = ctx.queue().commandBuffer()
+            let cmd_buf = ctx
+                .queue()
+                .commandBuffer()
                 .ok_or(Error::Gpu("failed to create command buffer".into()))?;
-            let encoder = cmd_buf.computeCommandEncoder()
+            let encoder = cmd_buf
+                .computeCommandEncoder()
                 .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
             unsafe {
                 encoder.setComputePipelineState(&self.extract_pipeline);
-                encoder.setBuffer_offset_atIndex(Some(dist_buf.metal_buffer()),  0, 0);
+                encoder.setBuffer_offset_atIndex(Some(dist_buf.metal_buffer()), 0, 0);
                 encoder.setBuffer_offset_atIndex(Some(match_buf.metal_buffer()), 0, 1);
                 encoder.setBuffer_offset_atIndex(Some(count_buf.metal_buffer()), 0, 2);
                 encoder.setBytes_length_atIndex(
@@ -143,10 +165,18 @@ impl BruteMatcher {
                     3,
                 );
 
-                let tew    = self.extract_pipeline.threadExecutionWidth();
+                let tew = self.extract_pipeline.threadExecutionWidth();
                 let max_tg = self.extract_pipeline.maxTotalThreadsPerThreadgroup();
-                let grid    = MTLSize { width: n_query as usize, height: 1, depth: 1 };
-                let tg_size = MTLSize { width: tew.min(max_tg),  height: 1, depth: 1 };
+                let grid = MTLSize {
+                    width: n_query as usize,
+                    height: 1,
+                    depth: 1,
+                };
+                let tg_size = MTLSize {
+                    width: tew.min(max_tg),
+                    height: 1,
+                    depth: 1,
+                };
                 encoder.dispatchThreads_threadsPerThreadgroup(grid, tg_size);
             }
 

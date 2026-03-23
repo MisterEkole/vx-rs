@@ -7,9 +7,8 @@ use std::mem;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLComputeCommandEncoder, MTLComputePipelineState, MTLDevice,
-    MTLLibrary, MTLSize,
+    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLDevice, MTLLibrary, MTLSize,
 };
 
 use crate::context::Context;
@@ -36,9 +35,12 @@ pub struct TemplateMatcher {
 impl TemplateMatcher {
     pub fn new(ctx: &Context) -> Result<Self> {
         let name = objc2_foundation::ns_string!("template_match_ncc");
-        let func = ctx.library().newFunctionWithName(name)
+        let func = ctx
+            .library()
+            .newFunctionWithName(name)
             .ok_or(Error::ShaderMissing("template_match_ncc".into()))?;
-        let pipeline = ctx.device()
+        let pipeline = ctx
+            .device()
             .newComputePipelineStateWithFunction_error(&func)
             .map_err(|e| Error::PipelineCompile(format!("template_match_ncc: {e}")))?;
         Ok(Self { pipeline })
@@ -47,8 +49,8 @@ impl TemplateMatcher {
     /// Matches a template against a grayscale image using NCC.
     pub fn match_template(
         &self,
-        ctx:      &Context,
-        image:    &Texture,
+        ctx: &Context,
+        image: &Texture,
         template: &Texture,
     ) -> Result<TemplateMatchResult> {
         let img_w = image.width();
@@ -66,7 +68,8 @@ impl TemplateMatcher {
         let tpl_pixels = template.read_gray8();
         let n = (tpl_w * tpl_h) as f32;
         let tpl_mean: f32 = tpl_pixels.iter().map(|&p| p as f32 / 255.0).sum::<f32>() / n;
-        let tpl_norm: f32 = tpl_pixels.iter()
+        let tpl_norm: f32 = tpl_pixels
+            .iter()
             .map(|&p| {
                 let d = p as f32 / 255.0 - tpl_mean;
                 d * d
@@ -75,9 +78,9 @@ impl TemplateMatcher {
             .sqrt();
 
         let params = TemplateParams {
-            img_width:  img_w,
+            img_width: img_w,
             img_height: img_h,
-            tpl_width:  tpl_w,
+            tpl_width: tpl_w,
             tpl_height: tpl_h,
             tpl_mean,
             tpl_norm,
@@ -85,15 +88,18 @@ impl TemplateMatcher {
 
         let result_tex = Texture::output_r32float(ctx.device(), out_w, out_h)?;
 
-        let cmd_buf = ctx.queue().commandBuffer()
+        let cmd_buf = ctx
+            .queue()
+            .commandBuffer()
             .ok_or(Error::Gpu("failed to create command buffer".into()))?;
-        let encoder = cmd_buf.computeCommandEncoder()
+        let encoder = cmd_buf
+            .computeCommandEncoder()
             .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         unsafe {
             encoder.setComputePipelineState(&self.pipeline);
-            encoder.setTexture_atIndex(Some(image.raw()),      0);
-            encoder.setTexture_atIndex(Some(template.raw()),   1);
+            encoder.setTexture_atIndex(Some(image.raw()), 0);
+            encoder.setTexture_atIndex(Some(template.raw()), 1);
             encoder.setTexture_atIndex(Some(result_tex.raw()), 2);
             encoder.setBytes_length_atIndex(
                 NonNull::new_unchecked(&params as *const TemplateParams as *mut c_void),
@@ -101,11 +107,19 @@ impl TemplateMatcher {
                 0,
             );
 
-            let tew    = self.pipeline.threadExecutionWidth();
+            let tew = self.pipeline.threadExecutionWidth();
             let max_tg = self.pipeline.maxTotalThreadsPerThreadgroup();
-            let tg_h   = (max_tg / tew).max(1);
-            let grid    = MTLSize { width: out_w as usize, height: out_h as usize, depth: 1 };
-            let tg_size = MTLSize { width: tew,            height: tg_h,           depth: 1 };
+            let tg_h = (max_tg / tew).max(1);
+            let grid = MTLSize {
+                width: out_w as usize,
+                height: out_h as usize,
+                depth: 1,
+            };
+            let tg_size = MTLSize {
+                width: tew,
+                height: tg_h,
+                depth: 1,
+            };
             encoder.dispatchThreads_threadsPerThreadgroup(grid, tg_size);
         }
 

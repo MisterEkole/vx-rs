@@ -6,8 +6,8 @@ use core::ptr::NonNull;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{
-    MTLDevice, MTLOrigin, MTLPixelFormat, MTLRegion, MTLSize,
-    MTLTexture as MTLTextureTrait, MTLTextureDescriptor, MTLTextureUsage,
+    MTLDevice, MTLOrigin, MTLPixelFormat, MTLRegion, MTLSize, MTLTexture as MTLTextureTrait,
+    MTLTextureDescriptor, MTLTextureUsage,
 };
 
 use crate::error::{Error, Result};
@@ -45,7 +45,10 @@ impl Texture {
         if pixels.len() != expected {
             return Err(Error::InvalidConfig(format!(
                 "expected {} bytes for {}x{} R8 texture, got {}",
-                expected, width, height, pixels.len()
+                expected,
+                width,
+                height,
+                pixels.len()
             )));
         }
 
@@ -81,21 +84,29 @@ impl Texture {
             );
         }
 
-        Ok(Self { raw, width, height, format: TextureFormat::R8Unorm })
+        Ok(Self {
+            raw,
+            width,
+            height,
+            format: TextureFormat::R8Unorm,
+        })
     }
 
     /// Creates an R32Float texture from `width * height` floats.
     pub(crate) fn from_r32float(
         device: &ProtocolObject<dyn MTLDevice>,
-        data:   &[f32],
-        width:  u32,
+        data: &[f32],
+        width: u32,
         height: u32,
     ) -> Result<Self> {
         let expected = (width as usize) * (height as usize);
         if data.len() != expected {
             return Err(Error::InvalidConfig(format!(
                 "expected {} f32 values for {}x{} R32Float texture, got {}",
-                expected, width, height, data.len()
+                expected,
+                width,
+                height,
+                data.len()
             )));
         }
 
@@ -116,9 +127,9 @@ impl Texture {
         let region = MTLRegion {
             origin: MTLOrigin { x: 0, y: 0, z: 0 },
             size: MTLSize {
-                width:  width as usize,
+                width: width as usize,
                 height: height as usize,
-                depth:  1,
+                depth: 1,
             },
         };
 
@@ -131,13 +142,18 @@ impl Texture {
             );
         }
 
-        Ok(Self { raw, width, height, format: TextureFormat::R32Float })
+        Ok(Self {
+            raw,
+            width,
+            height,
+            format: TextureFormat::R32Float,
+        })
     }
 
     /// Creates an empty R8Unorm texture with `ShaderWrite` usage.
     pub(crate) fn output_gray8(
         device: &ProtocolObject<dyn MTLDevice>,
-        width:  u32,
+        width: u32,
         height: u32,
     ) -> Result<Self> {
         let desc = unsafe {
@@ -154,13 +170,18 @@ impl Texture {
             .newTextureWithDescriptor(&desc)
             .ok_or(Error::Gpu("failed to create output Metal texture".into()))?;
 
-        Ok(Self { raw, width, height, format: TextureFormat::R8Unorm })
+        Ok(Self {
+            raw,
+            width,
+            height,
+            format: TextureFormat::R8Unorm,
+        })
     }
 
     /// Creates an R32Float texture with `ShaderRead | ShaderWrite` usage.
     pub(crate) fn intermediate_r32float(
         device: &ProtocolObject<dyn MTLDevice>,
-        width:  u32,
+        width: u32,
         height: u32,
     ) -> Result<Self> {
         let desc = unsafe {
@@ -173,17 +194,22 @@ impl Texture {
         };
         desc.setUsage(MTLTextureUsage::ShaderRead | MTLTextureUsage::ShaderWrite);
 
-        let raw = device
-            .newTextureWithDescriptor(&desc)
-            .ok_or(Error::Gpu("failed to create intermediate R32Float texture".into()))?;
+        let raw = device.newTextureWithDescriptor(&desc).ok_or(Error::Gpu(
+            "failed to create intermediate R32Float texture".into(),
+        ))?;
 
-        Ok(Self { raw, width, height, format: TextureFormat::R32Float })
+        Ok(Self {
+            raw,
+            width,
+            height,
+            format: TextureFormat::R32Float,
+        })
     }
 
     /// Creates an R8Unorm texture with `ShaderRead | ShaderWrite` usage.
     pub(crate) fn intermediate_gray8(
         device: &ProtocolObject<dyn MTLDevice>,
-        width:  u32,
+        width: u32,
         height: u32,
     ) -> Result<Self> {
         let desc = unsafe {
@@ -196,25 +222,33 @@ impl Texture {
         };
         desc.setUsage(MTLTextureUsage::ShaderRead | MTLTextureUsage::ShaderWrite);
 
-        let raw = device
-            .newTextureWithDescriptor(&desc)
-            .ok_or(Error::Gpu("failed to create intermediate R8Unorm texture".into()))?;
+        let raw = device.newTextureWithDescriptor(&desc).ok_or(Error::Gpu(
+            "failed to create intermediate R8Unorm texture".into(),
+        ))?;
 
-        Ok(Self { raw, width, height, format: TextureFormat::R8Unorm })
+        Ok(Self {
+            raw,
+            width,
+            height,
+            format: TextureFormat::R8Unorm,
+        })
     }
 
     /// Creates an RGBA8Unorm texture from `width * height * 4` bytes.
     pub(crate) fn from_rgba8(
         device: &ProtocolObject<dyn MTLDevice>,
         pixels: &[u8],
-        width:  u32,
+        width: u32,
         height: u32,
     ) -> Result<Self> {
         let expected = (width as usize) * (height as usize) * 4;
         if pixels.len() != expected {
             return Err(Error::InvalidConfig(format!(
                 "expected {} bytes for {}x{} RGBA8 texture, got {}",
-                expected, width, height, pixels.len()
+                expected,
+                width,
+                height,
+                pixels.len()
             )));
         }
 
@@ -235,9 +269,9 @@ impl Texture {
         let region = MTLRegion {
             origin: MTLOrigin { x: 0, y: 0, z: 0 },
             size: MTLSize {
-                width:  width as usize,
+                width: width as usize,
                 height: height as usize,
-                depth:  1,
+                depth: 1,
             },
         };
 
@@ -250,13 +284,18 @@ impl Texture {
             );
         }
 
-        Ok(Self { raw, width, height, format: TextureFormat::RGBA8Unorm })
+        Ok(Self {
+            raw,
+            width,
+            height,
+            format: TextureFormat::RGBA8Unorm,
+        })
     }
 
     /// Creates an empty RGBA8Unorm texture with `ShaderRead | ShaderWrite` usage.
     pub(crate) fn output_rgba8(
         device: &ProtocolObject<dyn MTLDevice>,
-        width:  u32,
+        width: u32,
         height: u32,
     ) -> Result<Self> {
         let desc = unsafe {
@@ -273,13 +312,18 @@ impl Texture {
             .newTextureWithDescriptor(&desc)
             .ok_or(Error::Gpu("failed to create output RGBA8 texture".into()))?;
 
-        Ok(Self { raw, width, height, format: TextureFormat::RGBA8Unorm })
+        Ok(Self {
+            raw,
+            width,
+            height,
+            format: TextureFormat::RGBA8Unorm,
+        })
     }
 
     /// Creates an empty R32Float texture with `ShaderWrite` usage.
     pub(crate) fn output_r32float(
         device: &ProtocolObject<dyn MTLDevice>,
-        width:  u32,
+        width: u32,
         height: u32,
     ) -> Result<Self> {
         let desc = unsafe {
@@ -292,11 +336,16 @@ impl Texture {
         };
         desc.setUsage(MTLTextureUsage::ShaderWrite);
 
-        let raw = device
-            .newTextureWithDescriptor(&desc)
-            .ok_or(Error::Gpu("failed to create output R32Float texture".into()))?;
+        let raw = device.newTextureWithDescriptor(&desc).ok_or(Error::Gpu(
+            "failed to create output R32Float texture".into(),
+        ))?;
 
-        Ok(Self { raw, width, height, format: TextureFormat::R32Float })
+        Ok(Self {
+            raw,
+            width,
+            height,
+            format: TextureFormat::R32Float,
+        })
     }
 
     /// Reads back as `width * height` R8 bytes. Call after GPU completion.
@@ -307,9 +356,9 @@ impl Texture {
         let region = MTLRegion {
             origin: MTLOrigin { x: 0, y: 0, z: 0 },
             size: MTLSize {
-                width:  self.width as usize,
+                width: self.width as usize,
                 height: self.height as usize,
-                depth:  1,
+                depth: 1,
             },
         };
 
@@ -333,9 +382,9 @@ impl Texture {
         let region = MTLRegion {
             origin: MTLOrigin { x: 0, y: 0, z: 0 },
             size: MTLSize {
-                width:  self.width as usize,
+                width: self.width as usize,
                 height: self.height as usize,
-                depth:  1,
+                depth: 1,
             },
         };
 
@@ -359,9 +408,9 @@ impl Texture {
         let region = MTLRegion {
             origin: MTLOrigin { x: 0, y: 0, z: 0 },
             size: MTLSize {
-                width:  self.width as usize,
+                width: self.width as usize,
                 height: self.height as usize,
-                depth:  1,
+                depth: 1,
             },
         };
 
@@ -398,12 +447,17 @@ impl Texture {
 
     /// Wraps an existing `MTLTexture` without copying data.
     pub fn from_metal_texture(
-        raw:    Retained<ProtocolObject<dyn MTLTextureTrait>>,
-        width:  u32,
+        raw: Retained<ProtocolObject<dyn MTLTextureTrait>>,
+        width: u32,
         height: u32,
         format: TextureFormat,
     ) -> Self {
-        Self { raw, width, height, format }
+        Self {
+            raw,
+            width,
+            height,
+            format,
+        }
     }
 }
 

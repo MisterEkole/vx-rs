@@ -11,12 +11,12 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use vx_vision::Context;
-use vx_vision::Texture;
 use vx_vision::kernels::fast::{FastDetectConfig, FastDetector};
 use vx_vision::kernels::harris::{HarrisConfig, HarrisScorer};
 use vx_vision::kernels::klt::{ImagePyramid, KltConfig, KltTracker};
 use vx_vision::kernels::pyramid::PyramidBuilder;
+use vx_vision::Context;
+use vx_vision::Texture;
 
 const HARRIS_THRESHOLD: f32 = 1e-5;
 const MAX_TRACK_POINTS: usize = 500;
@@ -51,7 +51,10 @@ fn main() {
     let tracker = KltTracker::new(&ctx).expect("Failed to create KLT pipeline");
     let pyr_builder = PyramidBuilder::new(&ctx).expect("Failed to create pyramid pipeline");
     let setup_ms = t0.elapsed().as_secs_f64() * 1000.0;
-    println!("GPU setup:        {:.2} ms (context + 4 pipelines)\n", setup_ms);
+    println!(
+        "GPU setup:        {:.2} ms (context + 4 pipelines)\n",
+        setup_ms
+    );
 
     let fast_config = FastDetectConfig::new(20, 4096);
     let harris_config = HarrisConfig::new(0.04, 3);
@@ -67,25 +70,38 @@ fn main() {
 
     let (first_pixels, w, h) = load_gray8(&frames[0]);
 
-    let first_texture = ctx.texture_gray8(&first_pixels, w, h)
+    let first_texture = ctx
+        .texture_gray8(&first_pixels, w, h)
         .expect("Failed to create texture");
 
     let t_pyr = Instant::now();
     let mut prev_pyramid = build_pyramid_gpu(&ctx, &pyr_builder, &first_texture);
     let first_pyr_ms = t_pyr.elapsed().as_secs_f64() * 1000.0;
     let mut tracked_positions = detect_and_score(
-        &ctx, &fast, &harris, &first_texture,
-        &fast_config, &harris_config,
+        &ctx,
+        &fast,
+        &harris,
+        &first_texture,
+        &fast_config,
+        &harris_config,
     );
     detect_count += 1;
     let initial_count = tracked_positions.len();
 
-    println!("First pyramid:    {:.2} ms ({}x{} -> 4 levels)", first_pyr_ms, w, h);
-    println!("Initial corners:  {} (top {} after Harris filter)\n",
-        initial_count, initial_count.min(MAX_TRACK_POINTS));
+    println!(
+        "First pyramid:    {:.2} ms ({}x{} -> 4 levels)",
+        first_pyr_ms, w, h
+    );
+    println!(
+        "Initial corners:  {} (top {} after Harris filter)\n",
+        initial_count,
+        initial_count.min(MAX_TRACK_POINTS)
+    );
 
-    println!("{:>6} {:>8} {:>7} {:>9} {:>9} {:>9} {:>9}",
-        "Frame", "Tracked", "Input", "Load", "Pyramid", "Track", "Total");
+    println!(
+        "{:>6} {:>8} {:>7} {:>9} {:>9} {:>9} {:>9}",
+        "Frame", "Tracked", "Input", "Load", "Pyramid", "Track", "Total"
+    );
     println!("{}", "-".repeat(68));
 
     let benchmark_start = Instant::now();
@@ -96,7 +112,8 @@ fn main() {
         let load_ms = t_load.elapsed().as_secs_f64() * 1000.0;
         total_load_ms += load_ms;
 
-        let curr_tex = ctx.texture_gray8(&pixels, fw, fh)
+        let curr_tex = ctx
+            .texture_gray8(&pixels, fw, fh)
             .expect("Failed to create texture");
 
         let t_pyr = Instant::now();
@@ -109,8 +126,12 @@ fn main() {
         if tracked_positions.len() < min_points {
             let t_det = Instant::now();
             tracked_positions = detect_and_score(
-                &ctx, &fast, &harris, &curr_tex,
-                &fast_config, &harris_config,
+                &ctx,
+                &fast,
+                &harris,
+                &curr_tex,
+                &fast_config,
+                &harris_config,
             );
             detect_ms = t_det.elapsed().as_secs_f64() * 1000.0;
             total_detect_ms += detect_ms;
@@ -120,17 +141,21 @@ fn main() {
         let n_input = tracked_positions.len();
 
         let t_track = Instant::now();
-        let result = tracker.track(
-            &ctx,
-            &prev_pyramid,
-            &curr_pyramid,
-            &tracked_positions,
-            &klt_config,
-        ).expect("KLT tracking failed");
+        let result = tracker
+            .track(
+                &ctx,
+                &prev_pyramid,
+                &curr_pyramid,
+                &tracked_positions,
+                &klt_config,
+            )
+            .expect("KLT tracking failed");
         let track_ms = t_track.elapsed().as_secs_f64() * 1000.0;
         total_track_ms += track_ms;
 
-        tracked_positions = result.points.iter()
+        tracked_positions = result
+            .points
+            .iter()
             .zip(result.status.iter())
             .filter(|(_, &ok)| ok)
             .map(|(&pt, _)| pt)
@@ -148,8 +173,10 @@ fn main() {
             } else {
                 String::new()
             };
-            println!("{:>6} {:>4}/{:<3} {:>6} {:>8.2} {:>8.2} {:>8.2} {:>8.2}{}",
-                i, n_tracked, n_input, "", load_ms, pyr_ms, track_ms, frame_total, det_str);
+            println!(
+                "{:>6} {:>4}/{:<3} {:>6} {:>8.2} {:>8.2} {:>8.2} {:>8.2}{}",
+                i, n_tracked, n_input, "", load_ms, pyr_ms, track_ms, frame_total, det_str
+            );
         }
 
         prev_pyramid = curr_pyramid;
@@ -163,23 +190,49 @@ fn main() {
     println!("{}", "=".repeat(68));
     println!("Frames processed:     {}", total_frames);
     println!("Wall-clock time:      {:.2} s", wall_time);
-    println!("Avg FPS:              {:.1}", total_frames as f64 / wall_time);
-    println!("Avg frame time:       {:.2} ms", (wall_time * 1000.0) / total_frames as f64);
+    println!(
+        "Avg FPS:              {:.1}",
+        total_frames as f64 / wall_time
+    );
+    println!(
+        "Avg frame time:       {:.2} ms",
+        (wall_time * 1000.0) / total_frames as f64
+    );
     println!();
     println!("Per-stage averages:");
-    println!("  Image load:         {:.2} ms", total_load_ms / total_frames as f64);
-    println!("  Pyramid build:      {:.2} ms", total_pyramid_ms / total_frames as f64);
-    println!("  KLT track:          {:.2} ms", total_track_ms / total_frames as f64);
+    println!(
+        "  Image load:         {:.2} ms",
+        total_load_ms / total_frames as f64
+    );
+    println!(
+        "  Pyramid build:      {:.2} ms",
+        total_pyramid_ms / total_frames as f64
+    );
+    println!(
+        "  KLT track:          {:.2} ms",
+        total_track_ms / total_frames as f64
+    );
     if detect_count > 0 {
-        println!("  Detection (FAST+H): {:.2} ms (ran {} times)",
-            total_detect_ms / detect_count as f64, detect_count);
+        println!(
+            "  Detection (FAST+H): {:.2} ms (ran {} times)",
+            total_detect_ms / detect_count as f64,
+            detect_count
+        );
     }
     println!();
     println!("Tracking stats:");
-    println!("  Avg tracked/frame:  {:.0}", total_tracked as f64 / total_frames as f64);
-    println!("  Re-detections:      {} (every ~{} frames)",
+    println!(
+        "  Avg tracked/frame:  {:.0}",
+        total_tracked as f64 / total_frames as f64
+    );
+    println!(
+        "  Re-detections:      {} (every ~{} frames)",
         detect_count,
-        if detect_count > 1 { total_frames / (detect_count - 1) } else { total_frames }
+        if detect_count > 1 {
+            total_frames / (detect_count - 1)
+        } else {
+            total_frames
+        }
     );
     println!();
     println!("Pipeline config:");
@@ -187,10 +240,12 @@ fn main() {
     println!("  Harris k:           {}", harris_config.k);
     println!("  Harris filter:      response > {}", HARRIS_THRESHOLD);
     println!("  Max track points:   {}", MAX_TRACK_POINTS);
-    println!("  KLT window:         {}x{} (radius={})",
+    println!(
+        "  KLT window:         {}x{} (radius={})",
         2 * klt_config.win_radius + 1,
         2 * klt_config.win_radius + 1,
-        klt_config.win_radius);
+        klt_config.win_radius
+    );
     println!("  KLT pyramid levels: {}", klt_config.max_level + 1);
     println!("  KLT max iterations: {}", klt_config.max_iterations);
     println!("  KLT epsilon:        {}", klt_config.epsilon);
@@ -209,12 +264,12 @@ fn load_gray8(path: &PathBuf) -> (Vec<u8>, u32, u32) {
 /// Build a 4-level image pyramid on the GPU using Gaussian downsample.
 /// Level 0 = original texture, levels 1-3 are half-size each.
 fn build_pyramid_gpu(ctx: &Context, pyr: &PyramidBuilder, level0: &Texture) -> ImagePyramid {
-    let down_levels = pyr.build(ctx, level0, 4)
-        .expect("GPU pyramid build failed");
+    let down_levels = pyr.build(ctx, level0, 4).expect("GPU pyramid build failed");
 
     // PyramidBuilder::build returns levels 1..N; prepend level0.
     let l0_pixels = level0.read_gray8();
-    let l0 = ctx.texture_gray8(&l0_pixels, level0.width(), level0.height())
+    let l0 = ctx
+        .texture_gray8(&l0_pixels, level0.width(), level0.height())
         .expect("Failed to re-create level 0");
 
     let mut levels = down_levels.into_iter();
@@ -237,7 +292,8 @@ fn detect_and_score(
     fast_config: &FastDetectConfig,
     harris_config: &HarrisConfig,
 ) -> Vec<[f32; 2]> {
-    let fast_result = fast.detect(ctx, texture, fast_config)
+    let fast_result = fast
+        .detect(ctx, texture, fast_config)
         .expect("FAST detection failed");
 
     if fast_result.corners.is_empty() {

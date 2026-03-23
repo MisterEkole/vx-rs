@@ -11,12 +11,12 @@
 
 use std::time::Instant;
 
-use vx_vision::{Context, TexturePool};
 use vx_vision::kernels::bilateral::{BilateralConfig, BilateralFilter};
 use vx_vision::kernels::canny::{CannyConfig, CannyDetector};
 use vx_vision::kernels::histogram::Histogram;
 use vx_vision::kernels::sobel::SobelFilter;
 use vx_vision::kernels::threshold::Threshold;
+use vx_vision::{Context, TexturePool};
 
 fn main() {
     let path = std::env::args()
@@ -34,7 +34,9 @@ fn main() {
     let hist = Histogram::new(&ctx).expect("Histogram");
     let thresh = Threshold::new(&ctx).expect("Threshold");
 
-    let texture = ctx.texture_gray8(img.as_raw(), w, h).expect("input texture");
+    let texture = ctx
+        .texture_gray8(img.as_raw(), w, h)
+        .expect("input texture");
 
     // Individual command buffers (no pooling, no pipeline)
     println!("=== Without Pipeline/Pool (individual dispatch) ===");
@@ -43,7 +45,13 @@ fn main() {
 
     for _ in 0..n_frames {
         let filtered = ctx.texture_output_gray8(w, h).expect("output");
-        bilateral.apply(&ctx, &texture, &filtered, &BilateralConfig::new(3, 5.0, 0.1))
+        bilateral
+            .apply(
+                &ctx,
+                &texture,
+                &filtered,
+                &BilateralConfig::new(3, 5.0, 0.1),
+            )
             .expect("bilateral");
 
         let _sobel_result = sobel.compute(&ctx, &filtered).expect("sobel");
@@ -75,7 +83,13 @@ fn main() {
 
     for _ in 0..n_frames {
         let filtered = pool.acquire_gray8(&ctx, w, h).expect("pooled output");
-        bilateral.apply(&ctx, &texture, &filtered, &BilateralConfig::new(3, 5.0, 0.1))
+        bilateral
+            .apply(
+                &ctx,
+                &texture,
+                &filtered,
+                &BilateralConfig::new(3, 5.0, 0.1),
+            )
             .expect("bilateral");
 
         let sobel_result = sobel.compute(&ctx, &filtered).expect("sobel");
@@ -106,9 +120,12 @@ fn main() {
     println!("  {} frames: {:.2} ms total", n_frames, pooled_ms);
     println!("  Per frame: {:.2} ms", per_frame_pooled);
     println!("  FPS:       {:.1}", 1000.0 / per_frame_pooled);
-    println!("  Pool stats: {} acquires, {} hits ({:.0}% reuse)",
-        pool.total_acquires(), pool.total_hits(),
-        pool.hit_rate() * 100.0);
+    println!(
+        "  Pool stats: {} acquires, {} hits ({:.0}% reuse)",
+        pool.total_acquires(),
+        pool.total_hits(),
+        pool.hit_rate() * 100.0
+    );
     println!("  Cached:    {} textures", pool.cached_count());
 
     let speedup = per_frame_individual / per_frame_pooled;
@@ -135,7 +152,8 @@ fn main() {
         let output = pool.acquire_gray8(&ctx, w, h).expect("pooled");
 
         let pipe = vx_vision::Pipeline::begin(&ctx).expect("pipeline");
-        let _state = blur.encode(&ctx, pipe.cmd_buf(), &texture, &blurred, &blur_cfg)
+        let _state = blur
+            .encode(&ctx, pipe.cmd_buf(), &texture, &blurred, &blur_cfg)
             .expect("encode blur");
 
         let retained = pipe.commit_and_wait();
@@ -153,8 +171,14 @@ fn main() {
     // Summary
     println!("--- Summary ---");
     println!("Individual:      {:.2} ms/frame", per_frame_individual);
-    println!("With Pool:       {:.2} ms/frame ({:.2}x faster)",
-        per_frame_pooled, per_frame_individual / per_frame_pooled);
-    println!("Final pool:      {} cached, {:.0}% hit rate",
-        pool.cached_count(), pool.hit_rate() * 100.0);
+    println!(
+        "With Pool:       {:.2} ms/frame ({:.2}x faster)",
+        per_frame_pooled,
+        per_frame_individual / per_frame_pooled
+    );
+    println!(
+        "Final pool:      {} cached, {:.0}% hit rate",
+        pool.cached_count(),
+        pool.hit_rate() * 100.0
+    );
 }

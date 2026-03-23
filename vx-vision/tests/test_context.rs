@@ -30,9 +30,7 @@ fn texture_rgba8_roundtrip() {
     let ctx = Context::new().unwrap();
     let w = 8u32;
     let h = 8u32;
-    let pixels: Vec<u8> = (0..(w * h * 4) as usize)
-        .map(|i| (i % 256) as u8)
-        .collect();
+    let pixels: Vec<u8> = (0..(w * h * 4) as usize).map(|i| (i % 256) as u8).collect();
 
     let tex = ctx.texture_rgba8(&pixels, w, h).unwrap();
     assert_eq!(tex.format(), TextureFormat::RGBA8Unorm);

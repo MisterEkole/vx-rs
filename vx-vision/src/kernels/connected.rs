@@ -11,9 +11,8 @@ use std::mem;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLComputeCommandEncoder, MTLComputePipelineState, MTLDevice,
-    MTLLibrary, MTLSize,
+    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLDevice, MTLLibrary, MTLSize,
 };
 
 use crate::context::Context;
@@ -52,7 +51,7 @@ pub struct CCLResult {
 
 /// Connected-components labeling pipelines. Requires CPU readback for convergence checks.
 pub struct ConnectedComponents {
-    init_pipeline:    Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    init_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     iterate_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
@@ -61,35 +60,39 @@ impl ConnectedComponents {
         let init_name = objc2_foundation::ns_string!("ccl_init");
         let iter_name = objc2_foundation::ns_string!("ccl_iterate");
 
-        let init_func = ctx.library().newFunctionWithName(init_name)
+        let init_func = ctx
+            .library()
+            .newFunctionWithName(init_name)
             .ok_or(Error::ShaderMissing("ccl_init".into()))?;
-        let iter_func = ctx.library().newFunctionWithName(iter_name)
+        let iter_func = ctx
+            .library()
+            .newFunctionWithName(iter_name)
             .ok_or(Error::ShaderMissing("ccl_iterate".into()))?;
 
-        let init_pipeline = ctx.device()
+        let init_pipeline = ctx
+            .device()
             .newComputePipelineStateWithFunction_error(&init_func)
             .map_err(|e| Error::PipelineCompile(format!("ccl_init: {e}")))?;
-        let iterate_pipeline = ctx.device()
+        let iterate_pipeline = ctx
+            .device()
             .newComputePipelineStateWithFunction_error(&iter_func)
             .map_err(|e| Error::PipelineCompile(format!("ccl_iterate: {e}")))?;
 
-        Ok(Self { init_pipeline, iterate_pipeline })
+        Ok(Self {
+            init_pipeline,
+            iterate_pipeline,
+        })
     }
 
     /// Labels connected components in a grayscale image.
-    pub fn label(
-        &self,
-        ctx:    &Context,
-        input:  &Texture,
-        config: &CCLConfig,
-    ) -> Result<CCLResult> {
+    pub fn label(&self, ctx: &Context, input: &Texture, config: &CCLConfig) -> Result<CCLResult> {
         let w = input.width();
         let h = input.height();
         let n_pixels = (w as usize) * (h as usize);
 
         let params = CCLParams {
-            width:     w,
-            height:    h,
+            width: w,
+            height: h,
             threshold: config.threshold,
         };
 
@@ -98,9 +101,12 @@ impl ConnectedComponents {
         let mut changed_buf = vx_gpu::UnifiedBuffer::<u32>::new(ctx.device(), 1)?;
 
         {
-            let cmd_buf = ctx.queue().commandBuffer()
+            let cmd_buf = ctx
+                .queue()
+                .commandBuffer()
                 .ok_or(Error::Gpu("failed to create command buffer".into()))?;
-            let encoder = cmd_buf.computeCommandEncoder()
+            let encoder = cmd_buf
+                .computeCommandEncoder()
                 .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
             unsafe {
@@ -113,11 +119,19 @@ impl ConnectedComponents {
                     1,
                 );
 
-                let tew    = self.init_pipeline.threadExecutionWidth();
+                let tew = self.init_pipeline.threadExecutionWidth();
                 let max_tg = self.init_pipeline.maxTotalThreadsPerThreadgroup();
-                let tg_h   = (max_tg / tew).max(1);
-                let grid    = MTLSize { width: w as usize, height: h as usize, depth: 1 };
-                let tg_size = MTLSize { width: tew,        height: tg_h,       depth: 1 };
+                let tg_h = (max_tg / tew).max(1);
+                let grid = MTLSize {
+                    width: w as usize,
+                    height: h as usize,
+                    depth: 1,
+                };
+                let tg_size = MTLSize {
+                    width: tew,
+                    height: tg_h,
+                    depth: 1,
+                };
                 encoder.dispatchThreads_threadsPerThreadgroup(grid, tg_size);
             }
 
@@ -138,9 +152,12 @@ impl ConnectedComponents {
                 (labels_b.metal_buffer(), labels_a.metal_buffer())
             };
 
-            let cmd_buf = ctx.queue().commandBuffer()
+            let cmd_buf = ctx
+                .queue()
+                .commandBuffer()
                 .ok_or(Error::Gpu("failed to create command buffer".into()))?;
-            let encoder = cmd_buf.computeCommandEncoder()
+            let encoder = cmd_buf
+                .computeCommandEncoder()
                 .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
             unsafe {
@@ -154,11 +171,19 @@ impl ConnectedComponents {
                     3,
                 );
 
-                let tew    = self.iterate_pipeline.threadExecutionWidth();
+                let tew = self.iterate_pipeline.threadExecutionWidth();
                 let max_tg = self.iterate_pipeline.maxTotalThreadsPerThreadgroup();
-                let tg_h   = (max_tg / tew).max(1);
-                let grid    = MTLSize { width: w as usize, height: h as usize, depth: 1 };
-                let tg_size = MTLSize { width: tew,        height: tg_h,       depth: 1 };
+                let tg_h = (max_tg / tew).max(1);
+                let grid = MTLSize {
+                    width: w as usize,
+                    height: h as usize,
+                    depth: 1,
+                };
+                let tg_size = MTLSize {
+                    width: tew,
+                    height: tg_h,
+                    depth: 1,
+                };
                 encoder.dispatchThreads_threadsPerThreadgroup(grid, tg_size);
             }
 

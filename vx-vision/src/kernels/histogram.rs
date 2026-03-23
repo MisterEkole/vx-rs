@@ -10,61 +10,71 @@ use std::mem;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLComputeCommandEncoder, MTLComputePipelineState, MTLDevice,
-    MTLLibrary, MTLSize,
+    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLDevice, MTLLibrary, MTLSize,
 };
 
-use vx_gpu::UnifiedBuffer;
 use crate::context::Context;
 use crate::error::{Error, Result};
 use crate::texture::Texture;
 use crate::types::HistogramParams;
+use vx_gpu::UnifiedBuffer;
 
 /// Compiled histogram pipelines. Requires CPU readback between passes.
 pub struct Histogram {
-    compute_pipeline:  Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    compute_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     equalize_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl Histogram {
     pub fn new(ctx: &Context) -> Result<Self> {
         let comp_name = objc2_foundation::ns_string!("histogram_compute");
-        let eq_name   = objc2_foundation::ns_string!("histogram_equalize");
+        let eq_name = objc2_foundation::ns_string!("histogram_equalize");
 
-        let comp_func = ctx.library().newFunctionWithName(comp_name)
+        let comp_func = ctx
+            .library()
+            .newFunctionWithName(comp_name)
             .ok_or(Error::ShaderMissing("histogram_compute".into()))?;
-        let eq_func = ctx.library().newFunctionWithName(eq_name)
+        let eq_func = ctx
+            .library()
+            .newFunctionWithName(eq_name)
             .ok_or(Error::ShaderMissing("histogram_equalize".into()))?;
 
-        let compute_pipeline = ctx.device()
+        let compute_pipeline = ctx
+            .device()
             .newComputePipelineStateWithFunction_error(&comp_func)
             .map_err(|e| Error::PipelineCompile(format!("histogram_compute: {e}")))?;
-        let equalize_pipeline = ctx.device()
+        let equalize_pipeline = ctx
+            .device()
             .newComputePipelineStateWithFunction_error(&eq_func)
             .map_err(|e| Error::PipelineCompile(format!("histogram_equalize: {e}")))?;
 
-        Ok(Self { compute_pipeline, equalize_pipeline })
+        Ok(Self {
+            compute_pipeline,
+            equalize_pipeline,
+        })
     }
 
     /// 256-bin histogram of a grayscale image.
-    pub fn compute(
-        &self,
-        ctx:   &Context,
-        input: &Texture,
-    ) -> Result<[u32; 256]> {
+    pub fn compute(&self, ctx: &Context, input: &Texture) -> Result<[u32; 256]> {
         let w = input.width();
         let h = input.height();
-        let params = HistogramParams { width: w, height: h };
+        let params = HistogramParams {
+            width: w,
+            height: h,
+        };
 
         let mut bins_buf: UnifiedBuffer<u32> = UnifiedBuffer::new(ctx.device(), 256)?;
         bins_buf.write(&[0u32; 256]);
 
         let _guard = bins_buf.gpu_guard();
 
-        let cmd_buf = ctx.queue().commandBuffer()
+        let cmd_buf = ctx
+            .queue()
+            .commandBuffer()
             .ok_or(Error::Gpu("failed to create command buffer".into()))?;
-        let encoder = cmd_buf.computeCommandEncoder()
+        let encoder = cmd_buf
+            .computeCommandEncoder()
             .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         unsafe {
@@ -77,11 +87,19 @@ impl Histogram {
                 1,
             );
 
-            let tew    = self.compute_pipeline.threadExecutionWidth();
+            let tew = self.compute_pipeline.threadExecutionWidth();
             let max_tg = self.compute_pipeline.maxTotalThreadsPerThreadgroup();
-            let tg_h   = (max_tg / tew).max(1);
-            let grid    = MTLSize { width: w as usize, height: h as usize, depth: 1 };
-            let tg_size = MTLSize { width: tew,        height: tg_h,       depth: 1 };
+            let tg_h = (max_tg / tew).max(1);
+            let grid = MTLSize {
+                width: w as usize,
+                height: h as usize,
+                depth: 1,
+            };
+            let tg_size = MTLSize {
+                width: tew,
+                height: tg_h,
+                depth: 1,
+            };
             encoder.dispatchThreads_threadsPerThreadgroup(grid, tg_size);
         }
 
@@ -97,12 +115,7 @@ impl Histogram {
     }
 
     /// Histogram equalization.
-    pub fn equalize(
-        &self,
-        ctx:    &Context,
-        input:  &Texture,
-        output: &Texture,
-    ) -> Result<()> {
+    pub fn equalize(&self, ctx: &Context, input: &Texture, output: &Texture) -> Result<()> {
         let w = input.width();
         let h = input.height();
         let total_pixels = (w as f32) * (h as f32);
@@ -122,16 +135,22 @@ impl Histogram {
         cdf_buf.write(&cdf);
 
         let _guard = cdf_buf.gpu_guard();
-        let params = HistogramParams { width: w, height: h };
+        let params = HistogramParams {
+            width: w,
+            height: h,
+        };
 
-        let cmd_buf = ctx.queue().commandBuffer()
+        let cmd_buf = ctx
+            .queue()
+            .commandBuffer()
             .ok_or(Error::Gpu("failed to create command buffer".into()))?;
-        let encoder = cmd_buf.computeCommandEncoder()
+        let encoder = cmd_buf
+            .computeCommandEncoder()
             .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         unsafe {
             encoder.setComputePipelineState(&self.equalize_pipeline);
-            encoder.setTexture_atIndex(Some(input.raw()),  0);
+            encoder.setTexture_atIndex(Some(input.raw()), 0);
             encoder.setTexture_atIndex(Some(output.raw()), 1);
             encoder.setBuffer_offset_atIndex(Some(cdf_buf.metal_buffer()), 0, 0);
             encoder.setBytes_length_atIndex(
@@ -140,11 +159,19 @@ impl Histogram {
                 1,
             );
 
-            let tew    = self.equalize_pipeline.threadExecutionWidth();
+            let tew = self.equalize_pipeline.threadExecutionWidth();
             let max_tg = self.equalize_pipeline.maxTotalThreadsPerThreadgroup();
-            let tg_h   = (max_tg / tew).max(1);
-            let grid    = MTLSize { width: w as usize, height: h as usize, depth: 1 };
-            let tg_size = MTLSize { width: tew,        height: tg_h,       depth: 1 };
+            let tg_h = (max_tg / tew).max(1);
+            let grid = MTLSize {
+                width: w as usize,
+                height: h as usize,
+                depth: 1,
+            };
+            let tg_size = MTLSize {
+                width: tew,
+                height: tg_h,
+                depth: 1,
+            };
             encoder.dispatchThreads_threadsPerThreadgroup(grid, tg_size);
         }
 

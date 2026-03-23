@@ -8,7 +8,6 @@
 
 use std::time::Instant;
 
-use vx_vision::Context;
 use vx_vision::kernels::bilateral::{BilateralConfig, BilateralFilter};
 use vx_vision::kernels::canny::{CannyConfig, CannyDetector};
 use vx_vision::kernels::connected::{CCLConfig, ConnectedComponents};
@@ -16,15 +15,14 @@ use vx_vision::kernels::distance::{DistanceConfig, DistanceTransform};
 use vx_vision::kernels::hough::{HoughConfig, HoughLines};
 use vx_vision::kernels::template_match::TemplateMatcher;
 use vx_vision::kernels::threshold::Threshold;
+use vx_vision::Context;
 
 fn main() {
     let path = std::env::args()
         .nth(1)
         .expect("Usage: advanced_cv_demo <image_path>");
 
-    let img = image::open(&path)
-        .expect("Failed to open image")
-        .to_luma8();
+    let img = image::open(&path).expect("Failed to open image").to_luma8();
     let (w, h) = img.dimensions();
     println!("Image: {}x{} ({})\n", w, h, path);
 
@@ -39,25 +37,45 @@ fn main() {
     let thresh = Threshold::new(&ctx).expect("Threshold pipeline");
     println!("GPU setup: {:.2} ms\n", t0.elapsed().as_secs_f64() * 1000.0);
 
-    let texture = ctx.texture_gray8(img.as_raw(), w, h)
+    let texture = ctx
+        .texture_gray8(img.as_raw(), w, h)
         .expect("Failed to create texture");
 
     // Bilateral filter
     let t1 = Instant::now();
     let filtered = ctx.texture_output_gray8(w, h).expect("output");
-    bilateral.apply(&ctx, &texture, &filtered, &BilateralConfig::new(5, 10.0, 0.1))
+    bilateral
+        .apply(
+            &ctx,
+            &texture,
+            &filtered,
+            &BilateralConfig::new(5, 10.0, 0.1),
+        )
         .expect("Bilateral failed");
     let bilateral_ms = t1.elapsed().as_secs_f64() * 1000.0;
 
     let orig_data = texture.read_gray8();
     let filt_data = filtered.read_gray8();
-    let mse: f64 = orig_data.iter().zip(filt_data.iter())
-        .map(|(&a, &b)| { let d = a as f64 - b as f64; d * d })
-        .sum::<f64>() / orig_data.len() as f64;
-    let psnr = if mse > 0.0 { 10.0 * (255.0f64 * 255.0 / mse).log10() } else { f64::INFINITY };
+    let mse: f64 = orig_data
+        .iter()
+        .zip(filt_data.iter())
+        .map(|(&a, &b)| {
+            let d = a as f64 - b as f64;
+            d * d
+        })
+        .sum::<f64>()
+        / orig_data.len() as f64;
+    let psnr = if mse > 0.0 {
+        10.0 * (255.0f64 * 255.0 / mse).log10()
+    } else {
+        f64::INFINITY
+    };
 
     println!("1. Bilateral filter:   {:.2} ms", bilateral_ms);
-    println!("   PSNR vs original:   {:.1} dB (lower = more smoothing)", psnr);
+    println!(
+        "   PSNR vs original:   {:.1} dB (lower = more smoothing)",
+        psnr
+    );
 
     // Canny + Hough lines
     let t2 = Instant::now();
@@ -66,7 +84,9 @@ fn main() {
     canny_cfg.high_threshold = 0.12;
     canny_cfg.blur_sigma = 1.4;
     canny_cfg.blur_radius = 4;
-    let edges = canny.detect(&ctx, &texture, &canny_cfg).expect("Canny failed");
+    let edges = canny
+        .detect(&ctx, &texture, &canny_cfg)
+        .expect("Canny failed");
     let canny_ms = t2.elapsed().as_secs_f64() * 1000.0;
 
     let edge_data = edges.read_r32float();
@@ -82,14 +102,21 @@ fn main() {
     hough_cfg.vote_threshold = w.min(h) / 4;
     hough_cfg.max_lines = 64;
     hough_cfg.nms_radius = 5;
-    let lines = hough.detect(&ctx, &edges, &hough_cfg).expect("Hough failed");
+    let lines = hough
+        .detect(&ctx, &edges, &hough_cfg)
+        .expect("Hough failed");
     let hough_ms = t2b.elapsed().as_secs_f64() * 1000.0;
 
     println!("   Hough lines:        {:.2} ms", hough_ms);
     println!("   Lines detected:     {}", lines.len());
     for (i, line) in lines.iter().take(5).enumerate() {
-        println!("     [{:2}] rho={:7.1} theta={:5.1}° votes={}",
-            i, line.rho, line.theta.to_degrees(), line.votes);
+        println!(
+            "     [{:2}] rho={:7.1} theta={:5.1}° votes={}",
+            i,
+            line.rho,
+            line.theta.to_degrees(),
+            line.votes
+        );
     }
     if lines.len() > 5 {
         println!("     ... and {} more", lines.len() - 5);
@@ -101,12 +128,16 @@ fn main() {
     let otsu_val = thresh.otsu(&ctx, &texture, &binary).expect("Otsu failed");
     let otsu_ms = t3.elapsed().as_secs_f64() * 1000.0;
 
-    println!("\n3. Otsu threshold:     {:.2} ms (threshold = {})", otsu_ms, otsu_val);
+    println!(
+        "\n3. Otsu threshold:     {:.2} ms (threshold = {})",
+        otsu_ms, otsu_val
+    );
 
     let t3b = Instant::now();
     let mut dist_cfg = DistanceConfig::default();
     dist_cfg.threshold = 0.5;
-    let dist_map = dt.compute(&ctx, &binary, &dist_cfg)
+    let dist_map = dt
+        .compute(&ctx, &binary, &dist_cfg)
         .expect("Distance transform failed");
     let dt_ms = t3b.elapsed().as_secs_f64() * 1000.0;
 
@@ -141,16 +172,24 @@ fn main() {
                 patch[y * patch_size as usize + x] = img.as_raw()[(cy + y) * w as usize + (cx + x)];
             }
         }
-        let tpl_tex = ctx.texture_gray8(&patch, patch_size, patch_size)
+        let tpl_tex = ctx
+            .texture_gray8(&patch, patch_size, patch_size)
             .expect("Template texture");
 
         let t5 = Instant::now();
-        let match_result = tm.match_template(&ctx, &texture, &tpl_tex)
+        let match_result = tm
+            .match_template(&ctx, &texture, &tpl_tex)
             .expect("Template match failed");
         let tm_ms = t5.elapsed().as_secs_f64() * 1000.0;
 
-        println!("\n5. Template matching:   {:.2} ms ({}x{} patch)", tm_ms, patch_size, patch_size);
-        println!("   Best match:          ({}, {}) score={:.4}", match_result.best_x, match_result.best_y, match_result.best_score);
+        println!(
+            "\n5. Template matching:   {:.2} ms ({}x{} patch)",
+            tm_ms, patch_size, patch_size
+        );
+        println!(
+            "   Best match:          ({}, {}) score={:.4}",
+            match_result.best_x, match_result.best_y, match_result.best_score
+        );
         println!("   Expected:            ({}, {})", cx, cy);
         let dx = match_result.best_x as i32 - cx as i32;
         let dy = match_result.best_y as i32 - cy as i32;

@@ -19,7 +19,9 @@ impl Pipeline {
     /// Creates a new command buffer from `ctx`.
     #[must_use = "pipeline must be committed to execute GPU work"]
     pub fn begin(ctx: &Context) -> Result<Self> {
-        let cmd_buf = ctx.queue().commandBuffer()
+        let cmd_buf = ctx
+            .queue()
+            .commandBuffer()
             .ok_or(Error::Gpu("Failed to create command buffer".into()))?;
         Ok(Self {
             cmd_buf,

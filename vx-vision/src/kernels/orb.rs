@@ -7,16 +7,15 @@ use std::mem;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLComputeCommandEncoder, MTLComputePipelineState, MTLDevice,
-    MTLLibrary, MTLSize,
+    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLDevice, MTLLibrary, MTLSize,
 };
 
-use vx_gpu::UnifiedBuffer;
 use crate::context::Context;
 use crate::error::{Error, Result};
 use crate::texture::Texture;
 use crate::types::{CornerPoint, ORBOutput, ORBParams};
+use vx_gpu::UnifiedBuffer;
 
 /// Configuration for the ORB descriptor extractor.
 #[non_exhaustive]
@@ -59,10 +58,14 @@ impl OrbDescriptor {
     pub fn new(ctx: &Context) -> Result<Self> {
         let name = objc2_foundation::ns_string!("orb_describe");
 
-        let func = ctx.library().newFunctionWithName(name)
+        let func = ctx
+            .library()
+            .newFunctionWithName(name)
             .ok_or(Error::ShaderMissing("orb_describe".into()))?;
 
-        let pipeline = ctx.device().newComputePipelineStateWithFunction_error(&func)
+        let pipeline = ctx
+            .device()
+            .newComputePipelineStateWithFunction_error(&func)
             .map_err(|e| Error::PipelineCompile(format!("orb_describe: {e}")))?;
 
         Ok(Self { pipeline })
@@ -78,9 +81,15 @@ impl OrbDescriptor {
         config: &OrbConfig,
     ) -> Result<OrbResult> {
         if keypoints.is_empty() {
-            return Ok(OrbResult { descriptors: Vec::new() });
+            return Ok(OrbResult {
+                descriptors: Vec::new(),
+            });
         }
-        assert_eq!(pattern.len(), 1024, "ORB pattern must be 1024 i32 values (256 pairs x 4)");
+        assert_eq!(
+            pattern.len(),
+            1024,
+            "ORB pattern must be 1024 i32 values (256 pairs x 4)"
+        );
 
         let n_keypoints = keypoints.len();
 
@@ -88,11 +97,9 @@ impl OrbDescriptor {
             UnifiedBuffer::new(ctx.device(), n_keypoints)?;
         kpt_buf.write(keypoints);
 
-        let out_buf: UnifiedBuffer<ORBOutput> =
-            UnifiedBuffer::new(ctx.device(), n_keypoints)?;
+        let out_buf: UnifiedBuffer<ORBOutput> = UnifiedBuffer::new(ctx.device(), n_keypoints)?;
 
-        let mut pat_buf: UnifiedBuffer<i32> =
-            UnifiedBuffer::new(ctx.device(), 1024)?;
+        let mut pat_buf: UnifiedBuffer<i32> = UnifiedBuffer::new(ctx.device(), 1024)?;
         pat_buf.write(pattern);
 
         let params = ORBParams {
@@ -104,14 +111,23 @@ impl OrbDescriptor {
         let _out_guard = out_buf.gpu_guard();
         let _pat_guard = pat_buf.gpu_guard();
 
-        let cmd_buf = ctx.queue().commandBuffer()
+        let cmd_buf = ctx
+            .queue()
+            .commandBuffer()
             .ok_or(Error::Gpu("failed to create command buffer".into()))?;
-        let encoder = cmd_buf.computeCommandEncoder()
+        let encoder = cmd_buf
+            .computeCommandEncoder()
             .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         Self::encode_into(
-            &self.pipeline, &encoder, texture,
-            &kpt_buf, &out_buf, &pat_buf, &params, n_keypoints,
+            &self.pipeline,
+            &encoder,
+            texture,
+            &kpt_buf,
+            &out_buf,
+            &pat_buf,
+            &params,
+            n_keypoints,
         );
 
         encoder.endEncoding();
@@ -137,7 +153,9 @@ impl OrbDescriptor {
         config: &OrbConfig,
     ) -> Result<OrbEncodedBuffers> {
         if keypoints.is_empty() {
-            return Err(Error::InvalidConfig("cannot encode ORB with zero keypoints".into()));
+            return Err(Error::InvalidConfig(
+                "cannot encode ORB with zero keypoints".into(),
+            ));
         }
         assert_eq!(pattern.len(), 1024, "ORB pattern must be 1024 i32 values");
 
@@ -147,11 +165,9 @@ impl OrbDescriptor {
             UnifiedBuffer::new(ctx.device(), n_keypoints)?;
         kpt_buf.write(keypoints);
 
-        let out_buf: UnifiedBuffer<ORBOutput> =
-            UnifiedBuffer::new(ctx.device(), n_keypoints)?;
+        let out_buf: UnifiedBuffer<ORBOutput> = UnifiedBuffer::new(ctx.device(), n_keypoints)?;
 
-        let mut pat_buf: UnifiedBuffer<i32> =
-            UnifiedBuffer::new(ctx.device(), 1024)?;
+        let mut pat_buf: UnifiedBuffer<i32> = UnifiedBuffer::new(ctx.device(), 1024)?;
         pat_buf.write(pattern);
 
         let params = ORBParams {
@@ -160,8 +176,14 @@ impl OrbDescriptor {
         };
 
         Self::encode_into(
-            &self.pipeline, encoder, texture,
-            &kpt_buf, &out_buf, &pat_buf, &params, n_keypoints,
+            &self.pipeline,
+            encoder,
+            texture,
+            &kpt_buf,
+            &out_buf,
+            &pat_buf,
+            &params,
+            n_keypoints,
         );
 
         Ok(OrbEncodedBuffers {
@@ -202,8 +224,16 @@ impl OrbDescriptor {
             encoder.setBuffer_offset_atIndex(Some(pat_buf.metal_buffer()), 0, 3);
 
             let tew = pipeline.threadExecutionWidth();
-            let grid = MTLSize { width: n_keypoints, height: 1, depth: 1 };
-            let tg_size = MTLSize { width: tew, height: 1, depth: 1 };
+            let grid = MTLSize {
+                width: n_keypoints,
+                height: 1,
+                depth: 1,
+            };
+            let tg_size = MTLSize {
+                width: tew,
+                height: 1,
+                depth: 1,
+            };
 
             encoder.dispatchThreads_threadsPerThreadgroup(grid, tg_size);
         }
@@ -212,8 +242,8 @@ impl OrbDescriptor {
 
 /// Buffers returned by [`OrbDescriptor::encode`]. Must outlive the command buffer.
 pub struct OrbEncodedBuffers {
-    pub keypoints:   UnifiedBuffer<CornerPoint>,
+    pub keypoints: UnifiedBuffer<CornerPoint>,
     pub descriptors: UnifiedBuffer<ORBOutput>,
-    pub pattern:     UnifiedBuffer<i32>,
+    pub pattern: UnifiedBuffer<i32>,
     pub n_keypoints: usize,
 }

@@ -5,9 +5,9 @@
 // Run with:
 //   cargo run --example fast_demo -- path/to/image.png
 
-use vx_vision::Context;
 use vx_vision::kernels::fast::{FastDetectConfig, FastDetector};
 use vx_vision::kernels::harris::{HarrisConfig, HarrisScorer};
+use vx_vision::Context;
 
 fn main() {
     let ctx = Context::new().expect("No Metal GPU available");
@@ -17,9 +17,7 @@ fn main() {
     let path = std::env::args()
         .nth(1)
         .expect("Usage: fast_demo <image_path>");
-    let img = image::open(&path)
-        .expect("Failed to open image")
-        .to_luma8();
+    let img = image::open(&path).expect("Failed to open image").to_luma8();
     let (w, h) = img.dimensions();
 
     let texture = ctx
@@ -33,7 +31,9 @@ fn main() {
 
     println!(
         "FAST: {} candidate corners in {}x{} image",
-        fast_result.corners.len(), w, h
+        fast_result.corners.len(),
+        w,
+        h
     );
 
     // Harris replaces each corner's response with R = det(M) - k*trace(M)^2

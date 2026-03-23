@@ -7,16 +7,15 @@ use std::mem;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    MTLComputePipelineState, MTLCommandQueue, MTLDevice, MTLLibrary,
-    MTLSize,
+    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLDevice, MTLLibrary, MTLSize,
 };
 
-use vx_gpu::UnifiedBuffer;
 use crate::context::Context;
 use crate::error::{Error, Result};
 use crate::texture::Texture;
 use crate::types::{CornerPoint, HarrisParams};
+use vx_gpu::UnifiedBuffer;
 
 /// Configuration for the Harris corner response scorer.
 #[non_exhaustive]
@@ -58,10 +57,14 @@ impl HarrisScorer {
     pub fn new(ctx: &Context) -> Result<Self> {
         let name = objc2_foundation::ns_string!("harris_response");
 
-        let func = ctx.library().newFunctionWithName(name)
+        let func = ctx
+            .library()
+            .newFunctionWithName(name)
             .ok_or(Error::ShaderMissing("harris_response".into()))?;
 
-        let pipeline = ctx.device().newComputePipelineStateWithFunction_error(&func)
+        let pipeline = ctx
+            .device()
+            .newComputePipelineStateWithFunction_error(&func)
             .map_err(|e| Error::PipelineCompile(format!("harris_response: {e}")))?;
 
         Ok(Self { pipeline })
@@ -93,13 +96,23 @@ impl HarrisScorer {
 
         let _corner_guard = corner_buf.gpu_guard();
 
-        let cmd_buf = ctx.queue().commandBuffer()
+        let cmd_buf = ctx
+            .queue()
+            .commandBuffer()
             .ok_or(Error::Gpu("failed to create command buffer".into()))?;
 
-        let encoder = cmd_buf.computeCommandEncoder()
+        let encoder = cmd_buf
+            .computeCommandEncoder()
             .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
-        Self::encode_into(&self.pipeline, &encoder, texture, &corner_buf, &params, n_corners);
+        Self::encode_into(
+            &self.pipeline,
+            &encoder,
+            texture,
+            &corner_buf,
+            &params,
+            n_corners,
+        );
 
         encoder.endEncoding();
         cmd_buf.commit();
@@ -120,7 +133,9 @@ impl HarrisScorer {
         config: &HarrisConfig,
     ) -> Result<HarrisEncodedBuffers> {
         if corners.is_empty() {
-            return Err(Error::InvalidConfig("cannot encode Harris with zero corners".into()));
+            return Err(Error::InvalidConfig(
+                "cannot encode Harris with zero corners".into(),
+            ));
         }
 
         let n_corners = corners.len();
@@ -135,7 +150,14 @@ impl HarrisScorer {
             k: config.k,
         };
 
-        Self::encode_into(&self.pipeline, encoder, texture, &corner_buf, &params, n_corners);
+        Self::encode_into(
+            &self.pipeline,
+            encoder,
+            texture,
+            &corner_buf,
+            &params,
+            n_corners,
+        );
 
         Ok(HarrisEncodedBuffers {
             corners: corner_buf,

@@ -7,9 +7,8 @@ use std::mem;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLComputeCommandEncoder, MTLComputePipelineState, MTLDevice,
-    MTLLibrary, MTLSize,
+    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLDevice, MTLLibrary, MTLSize,
 };
 
 use crate::context::Context;
@@ -44,88 +43,135 @@ pub struct SobelEncodedState {
 /// Compiled Sobel gradient pipeline.
 pub struct SobelFilter {
     sobel_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    mag_pipeline:   Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    mag_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl SobelFilter {
     pub fn new(ctx: &Context) -> Result<Self> {
         let sobel_name = objc2_foundation::ns_string!("sobel_3x3");
-        let mag_name   = objc2_foundation::ns_string!("gradient_magnitude");
+        let mag_name = objc2_foundation::ns_string!("gradient_magnitude");
 
-        let sobel_func = ctx.library().newFunctionWithName(sobel_name)
+        let sobel_func = ctx
+            .library()
+            .newFunctionWithName(sobel_name)
             .ok_or_else(|| Error::ShaderMissing("sobel_3x3".into()))?;
-        let mag_func = ctx.library().newFunctionWithName(mag_name)
+        let mag_func = ctx
+            .library()
+            .newFunctionWithName(mag_name)
             .ok_or_else(|| Error::ShaderMissing("gradient_magnitude".into()))?;
 
-        let sobel_pipeline = ctx.device()
+        let sobel_pipeline = ctx
+            .device()
             .newComputePipelineStateWithFunction_error(&sobel_func)
             .map_err(|e| Error::PipelineCompile(format!("sobel_3x3: {e}")))?;
-        let mag_pipeline = ctx.device()
+        let mag_pipeline = ctx
+            .device()
             .newComputePipelineStateWithFunction_error(&mag_func)
             .map_err(|e| Error::PipelineCompile(format!("gradient_magnitude: {e}")))?;
 
-        Ok(Self { sobel_pipeline, mag_pipeline })
+        Ok(Self {
+            sobel_pipeline,
+            mag_pipeline,
+        })
     }
 
     /// Computes Sobel gradients, magnitude, and direction from a grayscale (R8Unorm) texture.
-    pub fn compute(
-        &self,
-        ctx:   &Context,
-        input: &Texture,
-    ) -> Result<SobelResult> {
+    pub fn compute(&self, ctx: &Context, input: &Texture) -> Result<SobelResult> {
         let w = input.width();
         let h = input.height();
 
-        let grad_x    = Texture::intermediate_r32float(ctx.device(), w, h)?;
-        let grad_y    = Texture::intermediate_r32float(ctx.device(), w, h)?;
+        let grad_x = Texture::intermediate_r32float(ctx.device(), w, h)?;
+        let grad_y = Texture::intermediate_r32float(ctx.device(), w, h)?;
         let magnitude = Texture::intermediate_r32float(ctx.device(), w, h)?;
         let direction = Texture::intermediate_r32float(ctx.device(), w, h)?;
 
-        let params = SobelParams { width: w, height: h };
+        let params = SobelParams {
+            width: w,
+            height: h,
+        };
 
-        let cmd_buf = ctx.queue().commandBuffer()
+        let cmd_buf = ctx
+            .queue()
+            .commandBuffer()
             .ok_or(Error::Gpu("failed to create command buffer".into()))?;
 
         {
-            let encoder = cmd_buf.computeCommandEncoder()
+            let encoder = cmd_buf
+                .computeCommandEncoder()
                 .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
-            Self::encode_sobel(&self.sobel_pipeline, &encoder, input, &grad_x, &grad_y, &params, w, h);
+            Self::encode_sobel(
+                &self.sobel_pipeline,
+                &encoder,
+                input,
+                &grad_x,
+                &grad_y,
+                &params,
+                w,
+                h,
+            );
             encoder.endEncoding();
         }
 
         {
-            let encoder = cmd_buf.computeCommandEncoder()
+            let encoder = cmd_buf
+                .computeCommandEncoder()
                 .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
-            Self::encode_magnitude(&self.mag_pipeline, &encoder, &grad_x, &grad_y, &magnitude, &direction, &params, w, h);
+            Self::encode_magnitude(
+                &self.mag_pipeline,
+                &encoder,
+                &grad_x,
+                &grad_y,
+                &magnitude,
+                &direction,
+                &params,
+                w,
+                h,
+            );
             encoder.endEncoding();
         }
 
         cmd_buf.commit();
         cmd_buf.waitUntilCompleted();
 
-        Ok(SobelResult { grad_x, grad_y, magnitude, direction })
+        Ok(SobelResult {
+            grad_x,
+            grad_y,
+            magnitude,
+            direction,
+        })
     }
 
     /// Computes only Sobel gradients (Ix, Iy) without magnitude or direction.
-    pub fn gradients_only(
-        &self,
-        ctx:   &Context,
-        input: &Texture,
-    ) -> Result<(Texture, Texture)> {
+    pub fn gradients_only(&self, ctx: &Context, input: &Texture) -> Result<(Texture, Texture)> {
         let w = input.width();
         let h = input.height();
 
         let grad_x = Texture::intermediate_r32float(ctx.device(), w, h)?;
         let grad_y = Texture::intermediate_r32float(ctx.device(), w, h)?;
 
-        let params = SobelParams { width: w, height: h };
+        let params = SobelParams {
+            width: w,
+            height: h,
+        };
 
-        let cmd_buf = ctx.queue().commandBuffer()
+        let cmd_buf = ctx
+            .queue()
+            .commandBuffer()
             .ok_or(Error::Gpu("failed to create command buffer".into()))?;
-        let encoder = cmd_buf.computeCommandEncoder()
+        let encoder = cmd_buf
+            .computeCommandEncoder()
             .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
-        Self::encode_sobel(&self.sobel_pipeline, &encoder, input, &grad_x, &grad_y, &params, w, h);
+        Self::encode_sobel(
+            &self.sobel_pipeline,
+            &encoder,
+            input,
+            &grad_x,
+            &grad_y,
+            &params,
+            w,
+            h,
+        );
 
         encoder.endEncoding();
         cmd_buf.commit();
@@ -137,51 +183,80 @@ impl SobelFilter {
     /// Encodes Sobel + magnitude/direction into `cmd_buf` without committing.
     pub fn encode(
         &self,
-        ctx:     &Context,
+        ctx: &Context,
         cmd_buf: &ProtocolObject<dyn MTLCommandBuffer>,
-        input:   &Texture,
+        input: &Texture,
     ) -> Result<SobelEncodedState> {
         let w = input.width();
         let h = input.height();
 
-        let grad_x    = Texture::intermediate_r32float(ctx.device(), w, h)?;
-        let grad_y    = Texture::intermediate_r32float(ctx.device(), w, h)?;
+        let grad_x = Texture::intermediate_r32float(ctx.device(), w, h)?;
+        let grad_y = Texture::intermediate_r32float(ctx.device(), w, h)?;
         let magnitude = Texture::intermediate_r32float(ctx.device(), w, h)?;
         let direction = Texture::intermediate_r32float(ctx.device(), w, h)?;
 
-        let params = SobelParams { width: w, height: h };
+        let params = SobelParams {
+            width: w,
+            height: h,
+        };
 
         {
-            let encoder = cmd_buf.computeCommandEncoder()
+            let encoder = cmd_buf
+                .computeCommandEncoder()
                 .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
-            Self::encode_sobel(&self.sobel_pipeline, &encoder, input, &grad_x, &grad_y, &params, w, h);
+            Self::encode_sobel(
+                &self.sobel_pipeline,
+                &encoder,
+                input,
+                &grad_x,
+                &grad_y,
+                &params,
+                w,
+                h,
+            );
             encoder.endEncoding();
         }
 
         {
-            let encoder = cmd_buf.computeCommandEncoder()
+            let encoder = cmd_buf
+                .computeCommandEncoder()
                 .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
-            Self::encode_magnitude(&self.mag_pipeline, &encoder, &grad_x, &grad_y, &magnitude, &direction, &params, w, h);
+            Self::encode_magnitude(
+                &self.mag_pipeline,
+                &encoder,
+                &grad_x,
+                &grad_y,
+                &magnitude,
+                &direction,
+                &params,
+                w,
+                h,
+            );
             encoder.endEncoding();
         }
 
-        Ok(SobelEncodedState { grad_x, grad_y, magnitude, direction })
+        Ok(SobelEncodedState {
+            grad_x,
+            grad_y,
+            magnitude,
+            direction,
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
     fn encode_sobel(
         pipeline: &ProtocolObject<dyn MTLComputePipelineState>,
-        encoder:  &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        input:    &Texture,
-        grad_x:   &Texture,
-        grad_y:   &Texture,
-        params:   &SobelParams,
-        width:    u32,
-        height:   u32,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        input: &Texture,
+        grad_x: &Texture,
+        grad_y: &Texture,
+        params: &SobelParams,
+        width: u32,
+        height: u32,
     ) {
         unsafe {
             encoder.setComputePipelineState(pipeline);
-            encoder.setTexture_atIndex(Some(input.raw()),  0);
+            encoder.setTexture_atIndex(Some(input.raw()), 0);
             encoder.setTexture_atIndex(Some(grad_x.raw()), 1);
             encoder.setTexture_atIndex(Some(grad_y.raw()), 2);
             encoder.setBytes_length_atIndex(
@@ -190,31 +265,39 @@ impl SobelFilter {
                 0,
             );
 
-            let tew    = pipeline.threadExecutionWidth();
+            let tew = pipeline.threadExecutionWidth();
             let max_tg = pipeline.maxTotalThreadsPerThreadgroup();
-            let tg_h   = (max_tg / tew).max(1);
-            let grid    = MTLSize { width: width as usize,  height: height as usize, depth: 1 };
-            let tg_size = MTLSize { width: tew,             height: tg_h,            depth: 1 };
+            let tg_h = (max_tg / tew).max(1);
+            let grid = MTLSize {
+                width: width as usize,
+                height: height as usize,
+                depth: 1,
+            };
+            let tg_size = MTLSize {
+                width: tew,
+                height: tg_h,
+                depth: 1,
+            };
             encoder.dispatchThreads_threadsPerThreadgroup(grid, tg_size);
         }
     }
 
     #[allow(clippy::too_many_arguments)]
     fn encode_magnitude(
-        pipeline:  &ProtocolObject<dyn MTLComputePipelineState>,
-        encoder:   &ProtocolObject<dyn MTLComputeCommandEncoder>,
-        grad_x:    &Texture,
-        grad_y:    &Texture,
+        pipeline: &ProtocolObject<dyn MTLComputePipelineState>,
+        encoder: &ProtocolObject<dyn MTLComputeCommandEncoder>,
+        grad_x: &Texture,
+        grad_y: &Texture,
         magnitude: &Texture,
         direction: &Texture,
-        params:    &SobelParams,
-        width:     u32,
-        height:    u32,
+        params: &SobelParams,
+        width: u32,
+        height: u32,
     ) {
         unsafe {
             encoder.setComputePipelineState(pipeline);
-            encoder.setTexture_atIndex(Some(grad_x.raw()),    0);
-            encoder.setTexture_atIndex(Some(grad_y.raw()),    1);
+            encoder.setTexture_atIndex(Some(grad_x.raw()), 0);
+            encoder.setTexture_atIndex(Some(grad_y.raw()), 1);
             encoder.setTexture_atIndex(Some(magnitude.raw()), 2);
             encoder.setTexture_atIndex(Some(direction.raw()), 3);
             encoder.setBytes_length_atIndex(
@@ -223,11 +306,19 @@ impl SobelFilter {
                 0,
             );
 
-            let tew    = pipeline.threadExecutionWidth();
+            let tew = pipeline.threadExecutionWidth();
             let max_tg = pipeline.maxTotalThreadsPerThreadgroup();
-            let tg_h   = (max_tg / tew).max(1);
-            let grid    = MTLSize { width: width as usize,  height: height as usize, depth: 1 };
-            let tg_size = MTLSize { width: tew,             height: tg_h,            depth: 1 };
+            let tg_h = (max_tg / tew).max(1);
+            let grid = MTLSize {
+                width: width as usize,
+                height: height as usize,
+                depth: 1,
+            };
+            let tg_size = MTLSize {
+                width: tew,
+                height: tg_h,
+                depth: 1,
+            };
             encoder.dispatchThreads_threadsPerThreadgroup(grid, tg_size);
         }
     }

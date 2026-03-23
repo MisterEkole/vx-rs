@@ -7,15 +7,15 @@ use std::mem;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLComputeCommandEncoder,
-    MTLComputePipelineState, MTLSize, MTLDevice, MTLLibrary, MTLCommandQueue,
+    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLDevice, MTLLibrary, MTLSize,
 };
 
-use vx_gpu::UnifiedBuffer;
 use crate::context::Context;
 use crate::error::{Error, Result};
 use crate::texture::Texture;
 use crate::types::{CornerPoint, FASTParams};
+use vx_gpu::UnifiedBuffer;
 
 /// Configuration for the FAST corner detector.
 #[non_exhaustive]
@@ -31,7 +31,10 @@ pub struct FastDetectConfig {
 impl FastDetectConfig {
     /// Creates a config with the given threshold and max corners.
     pub fn new(threshold: i32, max_corners: u32) -> Self {
-        Self { threshold, max_corners }
+        Self {
+            threshold,
+            max_corners,
+        }
     }
 }
 
@@ -64,10 +67,14 @@ impl FastDetector {
     pub fn new(ctx: &Context) -> Result<Self> {
         let name = objc2_foundation::ns_string!("fast_detect");
 
-        let func = ctx.library().newFunctionWithName(name)
+        let func = ctx
+            .library()
+            .newFunctionWithName(name)
             .ok_or(Error::ShaderMissing("fast_detect".into()))?;
 
-        let pipeline = ctx.device().newComputePipelineStateWithFunction_error(&func)
+        let pipeline = ctx
+            .device()
+            .newComputePipelineStateWithFunction_error(&func)
             .map_err(|e| Error::PipelineCompile(format!("fast_detect: {e}")))?;
 
         Ok(Self { pipeline })
@@ -99,16 +106,24 @@ impl FastDetector {
         let _corner_guard = corner_buf.gpu_guard();
         let _count_guard = count_buf.gpu_guard();
 
-        let cmd_buf = ctx.queue().commandBuffer()
+        let cmd_buf = ctx
+            .queue()
+            .commandBuffer()
             .ok_or(Error::Gpu("failed to create command buffer".into()))?;
 
-        let encoder = cmd_buf.computeCommandEncoder()
+        let encoder = cmd_buf
+            .computeCommandEncoder()
             .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         Self::encode_into(
-            &self.pipeline, &encoder, texture,
-            &corner_buf, &count_buf, &params,
-            width, height,
+            &self.pipeline,
+            &encoder,
+            texture,
+            &corner_buf,
+            &count_buf,
+            &params,
+            width,
+            height,
         );
 
         encoder.endEncoding();
@@ -151,9 +166,14 @@ impl FastDetector {
         };
 
         Self::encode_into(
-            &self.pipeline, encoder, texture,
-            &corner_buf, &count_buf, &params,
-            width, height,
+            &self.pipeline,
+            encoder,
+            texture,
+            &corner_buf,
+            &count_buf,
+            &params,
+            width,
+            height,
         );
 
         Ok(EncodedBuffers {

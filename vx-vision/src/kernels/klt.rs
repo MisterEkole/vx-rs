@@ -7,16 +7,15 @@ use std::mem;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLComputeCommandEncoder, MTLComputePipelineState, MTLDevice,
-    MTLLibrary, MTLSize,
+    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLDevice, MTLLibrary, MTLSize,
 };
 
-use vx_gpu::UnifiedBuffer;
 use crate::context::Context;
 use crate::error::{Error, Result};
 use crate::texture::Texture;
 use crate::types::KLTParams;
+use vx_gpu::UnifiedBuffer;
 
 /// Configuration for the KLT tracker.
 #[non_exhaustive]
@@ -67,10 +66,14 @@ impl KltTracker {
     pub fn new(ctx: &Context) -> Result<Self> {
         let name = objc2_foundation::ns_string!("klt_track_forward");
 
-        let func = ctx.library().newFunctionWithName(name)
+        let func = ctx
+            .library()
+            .newFunctionWithName(name)
             .ok_or(Error::ShaderMissing("klt_track_forward".into()))?;
 
-        let pipeline = ctx.device().newComputePipelineStateWithFunction_error(&func)
+        let pipeline = ctx
+            .device()
+            .newComputePipelineStateWithFunction_error(&func)
             .map_err(|e| Error::PipelineCompile(format!("klt_track_forward: {e}")))?;
 
         Ok(Self { pipeline })
@@ -94,15 +97,12 @@ impl KltTracker {
 
         let n_points = prev_points.len();
 
-        let mut prev_buf: UnifiedBuffer<[f32; 2]> =
-            UnifiedBuffer::new(ctx.device(), n_points)?;
+        let mut prev_buf: UnifiedBuffer<[f32; 2]> = UnifiedBuffer::new(ctx.device(), n_points)?;
         prev_buf.write(prev_points);
 
-        let curr_buf: UnifiedBuffer<[f32; 2]> =
-            UnifiedBuffer::new(ctx.device(), n_points)?;
+        let curr_buf: UnifiedBuffer<[f32; 2]> = UnifiedBuffer::new(ctx.device(), n_points)?;
 
-        let status_buf: UnifiedBuffer<u8> =
-            UnifiedBuffer::new(ctx.device(), n_points)?;
+        let status_buf: UnifiedBuffer<u8> = UnifiedBuffer::new(ctx.device(), n_points)?;
 
         let params = KLTParams {
             n_points: n_points as u32,
@@ -117,17 +117,25 @@ impl KltTracker {
         let _curr_guard = curr_buf.gpu_guard();
         let _status_guard = status_buf.gpu_guard();
 
-        let cmd_buf = ctx.queue().commandBuffer()
+        let cmd_buf = ctx
+            .queue()
+            .commandBuffer()
             .ok_or(Error::Gpu("failed to create command buffer".into()))?;
 
-        let encoder = cmd_buf.computeCommandEncoder()
+        let encoder = cmd_buf
+            .computeCommandEncoder()
             .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         Self::encode_into(
-            &self.pipeline, &encoder,
-            prev_pyramid, curr_pyramid,
-            &prev_buf, &curr_buf, &status_buf,
-            &params, n_points,
+            &self.pipeline,
+            &encoder,
+            prev_pyramid,
+            curr_pyramid,
+            &prev_buf,
+            &curr_buf,
+            &status_buf,
+            &params,
+            n_points,
         );
 
         encoder.endEncoding();
@@ -158,20 +166,19 @@ impl KltTracker {
         config: &KltConfig,
     ) -> Result<KltEncodedBuffers> {
         if prev_points.is_empty() {
-            return Err(Error::InvalidConfig("cannot encode KLT with zero points".into()));
+            return Err(Error::InvalidConfig(
+                "cannot encode KLT with zero points".into(),
+            ));
         }
 
         let n_points = prev_points.len();
 
-        let mut prev_buf: UnifiedBuffer<[f32; 2]> =
-            UnifiedBuffer::new(ctx.device(), n_points)?;
+        let mut prev_buf: UnifiedBuffer<[f32; 2]> = UnifiedBuffer::new(ctx.device(), n_points)?;
         prev_buf.write(prev_points);
 
-        let curr_buf: UnifiedBuffer<[f32; 2]> =
-            UnifiedBuffer::new(ctx.device(), n_points)?;
+        let curr_buf: UnifiedBuffer<[f32; 2]> = UnifiedBuffer::new(ctx.device(), n_points)?;
 
-        let status_buf: UnifiedBuffer<u8> =
-            UnifiedBuffer::new(ctx.device(), n_points)?;
+        let status_buf: UnifiedBuffer<u8> = UnifiedBuffer::new(ctx.device(), n_points)?;
 
         let params = KLTParams {
             n_points: n_points as u32,
@@ -183,10 +190,15 @@ impl KltTracker {
         };
 
         Self::encode_into(
-            &self.pipeline, encoder,
-            prev_pyramid, curr_pyramid,
-            &prev_buf, &curr_buf, &status_buf,
-            &params, n_points,
+            &self.pipeline,
+            encoder,
+            prev_pyramid,
+            curr_pyramid,
+            &prev_buf,
+            &curr_buf,
+            &status_buf,
+            &params,
+            n_points,
         );
 
         Ok(KltEncodedBuffers {

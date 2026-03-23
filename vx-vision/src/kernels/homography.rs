@@ -10,15 +10,14 @@ use std::mem;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLComputeCommandEncoder, MTLComputePipelineState, MTLDevice,
-    MTLLibrary, MTLSize,
+    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLDevice, MTLLibrary, MTLSize,
 };
 
-use vx_gpu::UnifiedBuffer;
 use crate::context::Context;
 use crate::error::{Error, Result};
 use crate::types::{HomographyParams, PointPair, ScoreResult};
+use vx_gpu::UnifiedBuffer;
 
 /// RANSAC configuration for homography estimation.
 #[derive(Clone, Debug)]
@@ -37,9 +36,9 @@ pub struct RansacConfig {
 impl Default for RansacConfig {
     fn default() -> Self {
         Self {
-            max_iterations:   500,
+            max_iterations: 500,
             inlier_threshold: 3.0,
-            min_inliers:      10,
+            min_inliers: 10,
         }
     }
 }
@@ -65,9 +64,12 @@ pub struct HomographyEstimator {
 impl HomographyEstimator {
     pub fn new(ctx: &Context) -> Result<Self> {
         let name = objc2_foundation::ns_string!("homography_score");
-        let func = ctx.library().newFunctionWithName(name)
+        let func = ctx
+            .library()
+            .newFunctionWithName(name)
             .ok_or(Error::ShaderMissing("homography_score".into()))?;
-        let pipeline = ctx.device()
+        let pipeline = ctx
+            .device()
             .newComputePipelineStateWithFunction_error(&func)
             .map_err(|e| Error::PipelineCompile(format!("homography_score: {e}")))?;
         Ok(Self { pipeline })
@@ -76,8 +78,8 @@ impl HomographyEstimator {
     /// Estimates a homography from at least 4 point correspondences.
     pub fn estimate(
         &self,
-        ctx:    &Context,
-        pairs:  &[PointPair],
+        ctx: &Context,
+        pairs: &[PointPair],
         config: &RansacConfig,
     ) -> Result<HomographyResult> {
         let n = pairs.len();
@@ -111,36 +113,53 @@ impl HomographyEstimator {
             count_buf.write(&[0u32]);
 
             let params = HomographyParams {
-                n_points:         n as u32,
+                n_points: n as u32,
                 inlier_threshold: config.inlier_threshold,
-                h00: h[0], h01: h[1], h02: h[2],
-                h10: h[3], h11: h[4], h12: h[5],
-                h20: h[6], h21: h[7], h22: h[8],
+                h00: h[0],
+                h01: h[1],
+                h02: h[2],
+                h10: h[3],
+                h11: h[4],
+                h12: h[5],
+                h20: h[6],
+                h21: h[7],
+                h22: h[8],
             };
 
-            let _pairs_guard   = pairs_buf.gpu_guard();
+            let _pairs_guard = pairs_buf.gpu_guard();
             let _results_guard = results_buf.gpu_guard();
-            let _count_guard   = count_buf.gpu_guard();
+            let _count_guard = count_buf.gpu_guard();
 
-            let cmd_buf = ctx.queue().commandBuffer()
+            let cmd_buf = ctx
+                .queue()
+                .commandBuffer()
                 .ok_or(Error::Gpu("failed to create command buffer".into()))?;
-            let encoder = cmd_buf.computeCommandEncoder()
+            let encoder = cmd_buf
+                .computeCommandEncoder()
                 .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
             unsafe {
                 encoder.setComputePipelineState(&self.pipeline);
-                encoder.setBuffer_offset_atIndex(Some(pairs_buf.metal_buffer()),   0, 0);
+                encoder.setBuffer_offset_atIndex(Some(pairs_buf.metal_buffer()), 0, 0);
                 encoder.setBuffer_offset_atIndex(Some(results_buf.metal_buffer()), 0, 1);
-                encoder.setBuffer_offset_atIndex(Some(count_buf.metal_buffer()),   0, 2);
+                encoder.setBuffer_offset_atIndex(Some(count_buf.metal_buffer()), 0, 2);
                 encoder.setBytes_length_atIndex(
                     NonNull::new_unchecked(&params as *const HomographyParams as *mut c_void),
                     mem::size_of::<HomographyParams>(),
                     3,
                 );
 
-                let tew     = self.pipeline.threadExecutionWidth();
-                let grid    = MTLSize { width: n,   height: 1, depth: 1 };
-                let tg_size = MTLSize { width: tew, height: 1, depth: 1 };
+                let tew = self.pipeline.threadExecutionWidth();
+                let grid = MTLSize {
+                    width: n,
+                    height: 1,
+                    depth: 1,
+                };
+                let tg_size = MTLSize {
+                    width: tew,
+                    height: 1,
+                    depth: 1,
+                };
                 encoder.dispatchThreads_threadsPerThreadgroup(grid, tg_size);
             }
 
@@ -190,7 +209,9 @@ fn random_4(state: &mut u64, n: usize) -> [usize; 4] {
     let mut indices = [0usize; 4];
     let mut count = 0;
     while count < 4 {
-        *state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        *state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let idx = ((*state >> 33) as usize) % n;
         if !indices[..count].contains(&idx) {
             indices[count] = idx;
@@ -210,8 +231,8 @@ fn dlt_homography(pairs: &[PointPair]) -> Option<[f32; 9]> {
         let (x, y) = (p.src_x as f64, p.src_y as f64);
         let (xp, yp) = (p.dst_x as f64, p.dst_y as f64);
 
-        a[2*i]   = [-x, -y, -1.0, 0.0, 0.0, 0.0, xp*x, xp*y, xp];
-        a[2*i+1] = [0.0, 0.0, 0.0, -x, -y, -1.0, yp*x, yp*y, yp];
+        a[2 * i] = [-x, -y, -1.0, 0.0, 0.0, 0.0, xp * x, xp * y, xp];
+        a[2 * i + 1] = [0.0, 0.0, 0.0, -x, -y, -1.0, yp * x, yp * y, yp];
     }
 
     let mut m = [[0.0f64; 8]; 8];
@@ -233,8 +254,12 @@ fn dlt_homography(pairs: &[PointPair]) -> Option<[f32; 9]> {
     h[8] = 1.0;
 
     let norm: f32 = h.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if norm < 1e-10 { return None; }
-    for v in &mut h { *v /= norm; }
+    if norm < 1e-10 {
+        return None;
+    }
+    for v in &mut h {
+        *v /= norm;
+    }
 
     Some(h)
 }
@@ -251,7 +276,9 @@ fn gauss_solve_8x8(m: &mut [[f64; 8]; 8], b: &mut [f64; 8]) -> Option<[f64; 8]> 
                 max_row = row;
             }
         }
-        if max_val < 1e-12 { return None; }
+        if max_val < 1e-12 {
+            return None;
+        }
 
         if max_row != col {
             m.swap(col, max_row);

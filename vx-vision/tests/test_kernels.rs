@@ -3,18 +3,26 @@ use vx_vision::Context;
 // Helper
 
 fn make_gradient_image(w: u32, h: u32) -> Vec<u8> {
-    (0..(w * h)).map(|i| {
-        let x = i % w;
-        ((x as f32 / w as f32) * 255.0) as u8
-    }).collect()
+    (0..(w * h))
+        .map(|i| {
+            let x = i % w;
+            ((x as f32 / w as f32) * 255.0) as u8
+        })
+        .collect()
 }
 
 fn make_checkerboard(w: u32, h: u32, block: u32) -> Vec<u8> {
-    (0..(w * h)).map(|i| {
-        let x = (i % w) / block;
-        let y = (i / w) / block;
-        if (x + y).is_multiple_of(2) { 255u8 } else { 0u8 }
-    }).collect()
+    (0..(w * h))
+        .map(|i| {
+            let x = (i % w) / block;
+            let y = (i / w) / block;
+            if (x + y).is_multiple_of(2) {
+                255u8
+            } else {
+                0u8
+            }
+        })
+        .collect()
 }
 
 fn make_white_image(w: u32, h: u32) -> Vec<u8> {
@@ -34,7 +42,9 @@ fn gaussian_blur_reduces_noise() {
 
     let w = 64u32;
     let h = 64u32;
-    let noisy: Vec<u8> = (0..(w * h)).map(|i| if i % 2 == 0 { 255 } else { 0 }).collect();
+    let noisy: Vec<u8> = (0..(w * h))
+        .map(|i| if i % 2 == 0 { 255 } else { 0 })
+        .collect();
     let input = ctx.texture_gray8(&noisy, w, h).unwrap();
     let output = ctx.texture_output_gray8(w, h).unwrap();
 
@@ -47,15 +57,28 @@ fn gaussian_blur_reduces_noise() {
     let mean: f64 = result.iter().map(|&v| v as f64).sum::<f64>() / result.len() as f64;
     assert!((mean - 127.5).abs() < 20.0, "Mean after blur: {}", mean);
 
-    let variance: f64 = result.iter().map(|&v| {
-        let d = v as f64 - mean;
-        d * d
-    }).sum::<f64>() / result.len() as f64;
-    let orig_variance: f64 = noisy.iter().map(|&v| {
-        let d = v as f64 - 127.5;
-        d * d
-    }).sum::<f64>() / noisy.len() as f64;
-    assert!(variance < orig_variance * 0.5, "Blur didn't reduce variance enough: {} vs {}", variance, orig_variance);
+    let variance: f64 = result
+        .iter()
+        .map(|&v| {
+            let d = v as f64 - mean;
+            d * d
+        })
+        .sum::<f64>()
+        / result.len() as f64;
+    let orig_variance: f64 = noisy
+        .iter()
+        .map(|&v| {
+            let d = v as f64 - 127.5;
+            d * d
+        })
+        .sum::<f64>()
+        / noisy.len() as f64;
+    assert!(
+        variance < orig_variance * 0.5,
+        "Blur didn't reduce variance enough: {} vs {}",
+        variance,
+        orig_variance
+    );
 }
 
 // Sobel
@@ -79,7 +102,12 @@ fn sobel_detects_horizontal_gradient() {
     let avg_gx: f32 = gx.iter().sum::<f32>() / gx.len() as f32;
     let avg_gy: f32 = gy.iter().map(|v| v.abs()).sum::<f32>() / gy.len() as f32;
 
-    assert!(avg_gx.abs() > avg_gy, "Should detect horizontal gradient: gx={} gy={}", avg_gx, avg_gy);
+    assert!(
+        avg_gx.abs() > avg_gy,
+        "Should detect horizontal gradient: gx={} gy={}",
+        avg_gx,
+        avg_gy
+    );
 
     let max_mag = mag.iter().cloned().fold(0.0f32, f32::max);
     assert!(max_mag > 0.0, "Magnitude should be positive");
@@ -106,7 +134,10 @@ fn fast_detects_corners_in_checkerboard() {
     let cfg = vx_vision::kernels::fast::FastDetectConfig::new(20, 4096);
     let result = fast.detect(&ctx, &input, &cfg).unwrap();
 
-    assert!(!result.corners.is_empty(), "FAST should detect corners on rectangle edges (got 0)");
+    assert!(
+        !result.corners.is_empty(),
+        "FAST should detect corners on rectangle edges (got 0)"
+    );
 }
 
 #[test]
@@ -121,7 +152,11 @@ fn fast_no_corners_in_uniform() {
 
     let cfg = vx_vision::kernels::fast::FastDetectConfig::new(20, 1024);
     let result = fast.detect(&ctx, &input, &cfg).unwrap();
-    assert_eq!(result.corners.len(), 0, "Uniform image should have no corners");
+    assert_eq!(
+        result.corners.len(),
+        0,
+        "Uniform image should have no corners"
+    );
 }
 
 // Histogram
@@ -175,7 +210,11 @@ fn histogram_equalization_increases_range() {
     let max_val = *result.iter().max().unwrap();
     let range = max_val as i32 - min_val as i32;
 
-    assert!(range > 100, "Equalization should expand range: got {}", range);
+    assert!(
+        range > 100,
+        "Equalization should expand range: got {}",
+        range
+    );
 }
 
 // Threshold
@@ -195,7 +234,11 @@ fn threshold_binary() {
 
     let result = output.read_gray8();
     for &val in &result {
-        assert!(val == 0 || val == 255, "Binary should produce only 0 or 255, got {}", val);
+        assert!(
+            val == 0 || val == 255,
+            "Binary should produce only 0 or 255, got {}",
+            val
+        );
     }
 }
 
@@ -220,8 +263,11 @@ fn threshold_otsu() {
     let otsu_val = thresh.otsu(&ctx, &input, &output).unwrap();
 
     // Normalized [0,1]; should fall between modes 50/255 and 200/255
-    assert!(otsu_val > 0.15 && otsu_val < 0.85,
-        "Otsu threshold should be between modes: got {}", otsu_val);
+    assert!(
+        otsu_val > 0.15 && otsu_val < 0.85,
+        "Otsu threshold should be between modes: got {}",
+        otsu_val
+    );
 
     let result = output.read_gray8();
     for &val in &result {
@@ -253,7 +299,10 @@ fn morphology_erode_shrinks_white() {
     let result = output.read_gray8();
     let white_before = pixels.iter().filter(|&&v| v > 128).count();
     let white_after = result.iter().filter(|&&v| v > 128).count();
-    assert!(white_after < white_before, "Erosion should shrink white region");
+    assert!(
+        white_after < white_before,
+        "Erosion should shrink white region"
+    );
 }
 
 #[test]
@@ -274,7 +323,10 @@ fn morphology_dilate_grows_white() {
     let result = output.read_gray8();
     let white_before = pixels.iter().filter(|&&v| v > 128).count();
     let white_after = result.iter().filter(|&&v| v > 128).count();
-    assert!(white_after > white_before, "Dilation should grow white region");
+    assert!(
+        white_after > white_before,
+        "Dilation should grow white region"
+    );
 }
 
 // Bilateral Filter
@@ -286,9 +338,9 @@ fn bilateral_filter_preserves_edges() {
 
     let w = 64u32;
     let h = 64u32;
-    let pixels: Vec<u8> = (0..(w * h)).map(|i| {
-        if (i % w) < w / 2 { 0 } else { 255 }
-    }).collect();
+    let pixels: Vec<u8> = (0..(w * h))
+        .map(|i| if (i % w) < w / 2 { 0 } else { 255 })
+        .collect();
     let input = ctx.texture_gray8(&pixels, w, h).unwrap();
     let output = ctx.texture_output_gray8(w, h).unwrap();
 
@@ -296,12 +348,24 @@ fn bilateral_filter_preserves_edges() {
     bilateral.apply(&ctx, &input, &output, &cfg).unwrap();
 
     let result = output.read_gray8();
-    let left_mean: f64 = result.iter().take((w / 4) as usize)
-        .map(|&v| v as f64).sum::<f64>() / (w / 4) as f64;
+    let left_mean: f64 = result
+        .iter()
+        .take((w / 4) as usize)
+        .map(|&v| v as f64)
+        .sum::<f64>()
+        / (w / 4) as f64;
     let right_center = (w * h / 2 + w * 3 / 4) as usize;
     let right_val = result[right_center] as f64;
-    assert!(left_mean < 30.0, "Left side should stay dark: {}", left_mean);
-    assert!(right_val > 220.0, "Right side should stay bright: {}", right_val);
+    assert!(
+        left_mean < 30.0,
+        "Left side should stay dark: {}",
+        left_mean
+    );
+    assert!(
+        right_val > 220.0,
+        "Right side should stay bright: {}",
+        right_val
+    );
 }
 
 // Pyramid
@@ -344,7 +408,10 @@ fn resize_downscale() {
 
     let result = output.read_gray8();
     assert_eq!(result.len(), 32 * 32);
-    assert!(result[0] < result[31], "Gradient should be preserved after resize");
+    assert!(
+        result[0] < result[31],
+        "Gradient should be preserved after resize"
+    );
 }
 
 // Connected Components
@@ -374,7 +441,11 @@ fn ccl_separate_blobs() {
     cfg.max_iterations = 64;
     let result = ccl.label(&ctx, &input, &cfg).unwrap();
 
-    assert_eq!(result.n_components, 2, "Should find 2 components, found {}", result.n_components);
+    assert_eq!(
+        result.n_components, 2,
+        "Should find 2 components, found {}",
+        result.n_components
+    );
     assert!(result.iterations > 0, "Should take at least 1 iteration");
 }
 
@@ -391,7 +462,10 @@ fn ccl_uniform_black_no_components() {
     let cfg = vx_vision::kernels::connected::CCLConfig::default();
     let result = ccl.label(&ctx, &input, &cfg).unwrap();
 
-    assert_eq!(result.n_components, 0, "Black image should have 0 components");
+    assert_eq!(
+        result.n_components, 0,
+        "Black image should have 0 components"
+    );
 }
 
 // Distance Transform
@@ -412,7 +486,10 @@ fn distance_transform_single_seed() {
     let result = dt.compute(&ctx, &input, &cfg).unwrap();
 
     let distances = result.read_r32float();
-    assert!((distances[16 * 32 + 16]) < 0.01, "Seed distance should be ~0");
+    assert!(
+        (distances[16 * 32 + 16]) < 0.01,
+        "Seed distance should be ~0"
+    );
     assert!(distances[0] > 10.0, "Corner should be far from seed");
 }
 
@@ -459,8 +536,12 @@ fn integral_image_sum() {
     let bottom_right = data[(h - 1) as usize * w as usize + (w - 1) as usize];
     // Each pixel normalizes to 1.0, so sum = w*h
     let expected = (w * h) as f32;
-    assert!((bottom_right - expected).abs() < 1.0,
-        "Bottom-right integral should be ~{}, got {}", expected, bottom_right);
+    assert!(
+        (bottom_right - expected).abs() < 1.0,
+        "Bottom-right integral should be ~{}, got {}",
+        expected,
+        bottom_right
+    );
 }
 
 // Hough Lines
@@ -526,8 +607,12 @@ fn template_match_finds_self() {
 
     let dx = (result.best_x as i32 - 20).unsigned_abs();
     let dy_off = (result.best_y as i32 - 20).unsigned_abs();
-    assert!(dx <= 2 && dy_off <= 2,
-        "Should find template near (20,20), got ({}, {})", result.best_x, result.best_y);
+    assert!(
+        dx <= 2 && dy_off <= 2,
+        "Should find template near (20,20), got ({}, {})",
+        result.best_x,
+        result.best_y
+    );
 }
 
 // Brute-Force Matcher
@@ -538,13 +623,10 @@ fn matcher_identical_descriptors() {
     let matcher = vx_vision::kernels::matcher::BruteMatcher::new(&ctx).unwrap();
 
     let desc: Vec<u32> = vec![
-        0xAAAAAAAA, 0x55555555, 0x12345678, 0x9ABCDEF0,
-        0x11111111, 0x22222222, 0x33333333, 0x44444444,
-        0xFFFFFFFF, 0x00000000, 0xDEADBEEF, 0xCAFEBABE,
-        0x01010101, 0x02020202, 0x03030303, 0x04040404,
-        0x55555555, 0x66666666, 0x77777777, 0x88888888,
-        0x99999999, 0xAAAAAAAA, 0xBBBBBBBB, 0xCCCCCCCC,
-        0xDDDDDDDD, 0xEEEEEEEE, 0x11223344, 0x55667788,
+        0xAAAAAAAA, 0x55555555, 0x12345678, 0x9ABCDEF0, 0x11111111, 0x22222222, 0x33333333,
+        0x44444444, 0xFFFFFFFF, 0x00000000, 0xDEADBEEF, 0xCAFEBABE, 0x01010101, 0x02020202,
+        0x03030303, 0x04040404, 0x55555555, 0x66666666, 0x77777777, 0x88888888, 0x99999999,
+        0xAAAAAAAA, 0xBBBBBBBB, 0xCCCCCCCC, 0xDDDDDDDD, 0xEEEEEEEE, 0x11223344, 0x55667788,
         0x99AABBCC, 0xDDEEFF00, 0x11111111, 0x22222222,
     ];
 
@@ -555,7 +637,10 @@ fn matcher_identical_descriptors() {
 
     assert!(!matches.is_empty(), "Should match identical descriptors");
     for m in &matches {
-        assert_eq!(m.distance, 0, "Identical descriptors should have distance 0");
+        assert_eq!(
+            m.distance, 0,
+            "Identical descriptors should have distance 0"
+        );
     }
 }
 
@@ -576,7 +661,9 @@ fn pipeline_commit_and_wait() {
     let mut cfg = vx_vision::kernels::gaussian::GaussianConfig::default();
     cfg.sigma = 1.0;
     cfg.radius = 3;
-    let _state = blur.encode(&ctx, pipe.cmd_buf(), &input, &output, &cfg).unwrap();
+    let _state = blur
+        .encode(&ctx, pipe.cmd_buf(), &input, &output, &cfg)
+        .unwrap();
     let _retained = pipe.commit_and_wait();
 
     let result = output.read_gray8();
@@ -585,9 +672,9 @@ fn pipeline_commit_and_wait() {
 
 #[test]
 fn pipeline_five_kernel_chain() {
+    use vx_vision::kernels::bilateral::{BilateralConfig, BilateralFilter};
     use vx_vision::kernels::gaussian::{GaussianBlur, GaussianConfig};
-    use vx_vision::kernels::bilateral::{BilateralFilter, BilateralConfig};
-    use vx_vision::kernels::morphology::{Morphology, MorphConfig};
+    use vx_vision::kernels::morphology::{MorphConfig, Morphology};
     use vx_vision::kernels::threshold::Threshold;
 
     let ctx = Context::new().unwrap();
@@ -613,25 +700,41 @@ fn pipeline_five_kernel_chain() {
     let mut gauss_cfg = GaussianConfig::default();
     gauss_cfg.sigma = 1.0;
     gauss_cfg.radius = 2;
-    let _gauss_state = gauss.encode(&ctx, cmd, &input, &inter1, &gauss_cfg).unwrap();
+    let _gauss_state = gauss
+        .encode(&ctx, cmd, &input, &inter1, &gauss_cfg)
+        .unwrap();
 
     let bilateral_cfg = BilateralConfig::default();
-    bilateral.encode(cmd, &inter1, &inter2, &bilateral_cfg).unwrap();
+    bilateral
+        .encode(cmd, &inter1, &inter2, &bilateral_cfg)
+        .unwrap();
 
     let morph_cfg = MorphConfig::default();
-    morph.encode_dilate(cmd, &inter2, &inter3, &morph_cfg).unwrap();
+    morph
+        .encode_dilate(cmd, &inter2, &inter3, &morph_cfg)
+        .unwrap();
 
-    morph.encode_erode(cmd, &inter3, &inter4, &morph_cfg).unwrap();
+    morph
+        .encode_erode(cmd, &inter3, &inter4, &morph_cfg)
+        .unwrap();
 
-    thresh.encode_binary(cmd, &inter4, &output, 0.5, false).unwrap();
+    thresh
+        .encode_binary(cmd, &inter4, &output, 0.5, false)
+        .unwrap();
 
     let _retained = pipe.commit_and_wait();
 
     let result = output.read_gray8();
     assert_eq!(result.len(), (w * h) as usize);
     let nonzero = result.iter().filter(|&&v| v > 0).count();
-    assert!(nonzero > 0, "threshold output should have some white pixels");
-    assert!(nonzero < result.len(), "threshold output should have some black pixels");
+    assert!(
+        nonzero > 0,
+        "threshold output should have some white pixels"
+    );
+    assert!(
+        nonzero < result.len(),
+        "threshold output should have some black pixels"
+    );
 }
 
 // Multi-threaded dispatch
@@ -640,8 +743,8 @@ fn pipeline_five_kernel_chain() {
 fn multithreaded_dispatch() {
     use std::sync::Arc;
     use std::thread;
+    use vx_vision::kernels::fast::{FastDetectConfig, FastDetector};
     use vx_vision::kernels::pyramid::PyramidBuilder;
-    use vx_vision::kernels::fast::{FastDetector, FastDetectConfig};
 
     let ctx = Arc::new(Context::new().unwrap());
 

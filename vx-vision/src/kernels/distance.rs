@@ -7,9 +7,8 @@ use std::mem;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLComputeCommandEncoder, MTLComputePipelineState, MTLDevice,
-    MTLLibrary, MTLSize,
+    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLDevice, MTLLibrary, MTLSize,
 };
 
 use crate::context::Context;
@@ -33,8 +32,8 @@ impl Default for DistanceConfig {
 
 /// Distance transform compute pipelines.
 pub struct DistanceTransform {
-    init_pipeline:     Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    step_pipeline:     Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    init_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    step_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     distance_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
@@ -44,31 +43,44 @@ impl DistanceTransform {
         let step_name = objc2_foundation::ns_string!("jfa_step");
         let dist_name = objc2_foundation::ns_string!("jfa_distance");
 
-        let init_func = ctx.library().newFunctionWithName(init_name)
+        let init_func = ctx
+            .library()
+            .newFunctionWithName(init_name)
             .ok_or(Error::ShaderMissing("jfa_init".into()))?;
-        let step_func = ctx.library().newFunctionWithName(step_name)
+        let step_func = ctx
+            .library()
+            .newFunctionWithName(step_name)
             .ok_or(Error::ShaderMissing("jfa_step".into()))?;
-        let dist_func = ctx.library().newFunctionWithName(dist_name)
+        let dist_func = ctx
+            .library()
+            .newFunctionWithName(dist_name)
             .ok_or(Error::ShaderMissing("jfa_distance".into()))?;
 
-        let init_pipeline = ctx.device()
+        let init_pipeline = ctx
+            .device()
             .newComputePipelineStateWithFunction_error(&init_func)
             .map_err(|e| Error::PipelineCompile(format!("jfa_init: {e}")))?;
-        let step_pipeline = ctx.device()
+        let step_pipeline = ctx
+            .device()
             .newComputePipelineStateWithFunction_error(&step_func)
             .map_err(|e| Error::PipelineCompile(format!("jfa_step: {e}")))?;
-        let distance_pipeline = ctx.device()
+        let distance_pipeline = ctx
+            .device()
             .newComputePipelineStateWithFunction_error(&dist_func)
             .map_err(|e| Error::PipelineCompile(format!("jfa_distance: {e}")))?;
 
-        Ok(Self { init_pipeline, step_pipeline, distance_pipeline })
+        Ok(Self {
+            init_pipeline,
+            step_pipeline,
+            distance_pipeline,
+        })
     }
 
     /// Computes the distance transform, returning an R32Float texture.
     pub fn compute(
         &self,
-        ctx:    &Context,
-        input:  &Texture,
+        ctx: &Context,
+        input: &Texture,
         config: &DistanceConfig,
     ) -> Result<Texture> {
         let w = input.width();
@@ -80,12 +92,18 @@ impl DistanceTransform {
 
         {
             let params = JFAParams {
-                width: w, height: h, step_size: 0, threshold: config.threshold,
+                width: w,
+                height: h,
+                step_size: 0,
+                threshold: config.threshold,
             };
 
-            let cmd_buf = ctx.queue().commandBuffer()
+            let cmd_buf = ctx
+                .queue()
+                .commandBuffer()
                 .ok_or(Error::Gpu("failed to create command buffer".into()))?;
-            let encoder = cmd_buf.computeCommandEncoder()
+            let encoder = cmd_buf
+                .computeCommandEncoder()
                 .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
             unsafe {
@@ -98,11 +116,19 @@ impl DistanceTransform {
                     1,
                 );
 
-                let tew    = self.init_pipeline.threadExecutionWidth();
+                let tew = self.init_pipeline.threadExecutionWidth();
                 let max_tg = self.init_pipeline.maxTotalThreadsPerThreadgroup();
-                let tg_h   = (max_tg / tew).max(1);
-                let grid    = MTLSize { width: w as usize, height: h as usize, depth: 1 };
-                let tg_size = MTLSize { width: tew,        height: tg_h,       depth: 1 };
+                let tg_h = (max_tg / tew).max(1);
+                let grid = MTLSize {
+                    width: w as usize,
+                    height: h as usize,
+                    depth: 1,
+                };
+                let tg_size = MTLSize {
+                    width: tew,
+                    height: tg_h,
+                    depth: 1,
+                };
                 encoder.dispatchThreads_threadsPerThreadgroup(grid, tg_size);
             }
 
@@ -117,7 +143,10 @@ impl DistanceTransform {
 
         while k >= 1 {
             let params = JFAParams {
-                width: w, height: h, step_size: k, threshold: config.threshold,
+                width: w,
+                height: h,
+                step_size: k,
+                threshold: config.threshold,
             };
 
             let (src_buf, dst_buf) = if read_a {
@@ -126,9 +155,12 @@ impl DistanceTransform {
                 (seeds_b.metal_buffer(), seeds_a.metal_buffer())
             };
 
-            let cmd_buf = ctx.queue().commandBuffer()
+            let cmd_buf = ctx
+                .queue()
+                .commandBuffer()
                 .ok_or(Error::Gpu("failed to create command buffer".into()))?;
-            let encoder = cmd_buf.computeCommandEncoder()
+            let encoder = cmd_buf
+                .computeCommandEncoder()
                 .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
             unsafe {
@@ -141,11 +173,19 @@ impl DistanceTransform {
                     2,
                 );
 
-                let tew    = self.step_pipeline.threadExecutionWidth();
+                let tew = self.step_pipeline.threadExecutionWidth();
                 let max_tg = self.step_pipeline.maxTotalThreadsPerThreadgroup();
-                let tg_h   = (max_tg / tew).max(1);
-                let grid    = MTLSize { width: w as usize, height: h as usize, depth: 1 };
-                let tg_size = MTLSize { width: tew,        height: tg_h,       depth: 1 };
+                let tg_h = (max_tg / tew).max(1);
+                let grid = MTLSize {
+                    width: w as usize,
+                    height: h as usize,
+                    depth: 1,
+                };
+                let tg_size = MTLSize {
+                    width: tew,
+                    height: tg_h,
+                    depth: 1,
+                };
                 encoder.dispatchThreads_threadsPerThreadgroup(grid, tg_size);
             }
 
@@ -166,12 +206,18 @@ impl DistanceTransform {
         };
 
         let params = JFAParams {
-            width: w, height: h, step_size: 0, threshold: config.threshold,
+            width: w,
+            height: h,
+            step_size: 0,
+            threshold: config.threshold,
         };
 
-        let cmd_buf = ctx.queue().commandBuffer()
+        let cmd_buf = ctx
+            .queue()
+            .commandBuffer()
             .ok_or(Error::Gpu("failed to create command buffer".into()))?;
-        let encoder = cmd_buf.computeCommandEncoder()
+        let encoder = cmd_buf
+            .computeCommandEncoder()
             .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         unsafe {
@@ -184,11 +230,19 @@ impl DistanceTransform {
                 1,
             );
 
-            let tew    = self.distance_pipeline.threadExecutionWidth();
+            let tew = self.distance_pipeline.threadExecutionWidth();
             let max_tg = self.distance_pipeline.maxTotalThreadsPerThreadgroup();
-            let tg_h   = (max_tg / tew).max(1);
-            let grid    = MTLSize { width: w as usize, height: h as usize, depth: 1 };
-            let tg_size = MTLSize { width: tew,        height: tg_h,       depth: 1 };
+            let tg_h = (max_tg / tew).max(1);
+            let grid = MTLSize {
+                width: w as usize,
+                height: h as usize,
+                depth: 1,
+            };
+            let tg_size = MTLSize {
+                width: tew,
+                height: tg_h,
+                depth: 1,
+            };
             encoder.dispatchThreads_threadsPerThreadgroup(grid, tg_size);
         }
 

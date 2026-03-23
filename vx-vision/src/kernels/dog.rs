@@ -7,16 +7,15 @@ use std::mem;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{
-    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLComputeCommandEncoder, MTLComputePipelineState, MTLDevice,
-    MTLLibrary, MTLSize,
+    MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLDevice, MTLLibrary, MTLSize,
 };
 
 use crate::context::Context;
 use crate::error::{Error, Result};
-use crate::texture::Texture;
-use crate::types::{DoGParams, DoGExtremaParams, DoGKeypoint};
 use crate::kernels::gaussian::{GaussianBlur, GaussianConfig};
+use crate::texture::Texture;
+use crate::types::{DoGExtremaParams, DoGKeypoint, DoGParams};
 
 /// Configuration for DoG keypoint detection.
 #[derive(Clone, Debug)]
@@ -49,7 +48,7 @@ impl Default for DoGConfig {
 /// DoG detection compute pipelines.
 pub struct DoGDetector {
     subtract_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    extrema_pipeline:  Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    extrema_pipeline: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 }
 
 impl DoGDetector {
@@ -57,27 +56,36 @@ impl DoGDetector {
         let sub_name = objc2_foundation::ns_string!("dog_subtract");
         let ext_name = objc2_foundation::ns_string!("dog_extrema");
 
-        let sub_func = ctx.library().newFunctionWithName(sub_name)
+        let sub_func = ctx
+            .library()
+            .newFunctionWithName(sub_name)
             .ok_or_else(|| Error::ShaderMissing("dog_subtract".into()))?;
-        let ext_func = ctx.library().newFunctionWithName(ext_name)
+        let ext_func = ctx
+            .library()
+            .newFunctionWithName(ext_name)
             .ok_or_else(|| Error::ShaderMissing("dog_extrema".into()))?;
 
-        let subtract_pipeline = ctx.device()
+        let subtract_pipeline = ctx
+            .device()
             .newComputePipelineStateWithFunction_error(&sub_func)
             .map_err(|e| Error::PipelineCompile(format!("dog_subtract: {e}")))?;
-        let extrema_pipeline = ctx.device()
+        let extrema_pipeline = ctx
+            .device()
             .newComputePipelineStateWithFunction_error(&ext_func)
             .map_err(|e| Error::PipelineCompile(format!("dog_extrema: {e}")))?;
 
-        Ok(Self { subtract_pipeline, extrema_pipeline })
+        Ok(Self {
+            subtract_pipeline,
+            extrema_pipeline,
+        })
     }
 
     /// Detects scale-space keypoints across all DoG levels.
     pub fn detect(
         &self,
-        ctx:    &Context,
-        blur:   &GaussianBlur,
-        input:  &Texture,
+        ctx: &Context,
+        blur: &GaussianBlur,
+        input: &Texture,
         config: &DoGConfig,
     ) -> Result<Vec<DoGKeypoint>> {
         let w = input.width();
@@ -89,7 +97,15 @@ impl DoGDetector {
         let b0 = Texture::intermediate_r32float(ctx.device(), w, h)?;
         let sigma0 = config.base_sigma;
         let radius0 = (sigma0 * 3.0).ceil() as u32;
-        blur.apply(ctx, input, &b0, &GaussianConfig { sigma: sigma0, radius: radius0 })?;
+        blur.apply(
+            ctx,
+            input,
+            &b0,
+            &GaussianConfig {
+                sigma: sigma0,
+                radius: radius0,
+            },
+        )?;
         blurred.push(b0);
 
         for i in 1..n_blur {
@@ -108,46 +124,57 @@ impl DoGDetector {
             dogs.push(dog);
         }
 
-        let kp_buf = vx_gpu::UnifiedBuffer::<DoGKeypoint>::new(
-            ctx.device(),
-            config.max_keypoints as usize,
-        )?;
+        let kp_buf =
+            vx_gpu::UnifiedBuffer::<DoGKeypoint>::new(ctx.device(), config.max_keypoints as usize)?;
         let mut count_buf = vx_gpu::UnifiedBuffer::<u32>::new(ctx.device(), 1)?;
         count_buf.as_mut_slice()[0] = 0;
 
         for i in 0..(n_dog.saturating_sub(2)) {
             let extrema_params = DoGExtremaParams {
-                width:              w,
-                height:             h,
+                width: w,
+                height: h,
                 contrast_threshold: config.contrast_threshold,
-                max_keypoints:      config.max_keypoints,
-                octave:             0,
-                level:              i as u32,
+                max_keypoints: config.max_keypoints,
+                octave: 0,
+                level: i as u32,
             };
 
-            let cmd_buf = ctx.queue().commandBuffer()
+            let cmd_buf = ctx
+                .queue()
+                .commandBuffer()
                 .ok_or(Error::Gpu("failed to create command buffer".into()))?;
-            let encoder = cmd_buf.computeCommandEncoder()
+            let encoder = cmd_buf
+                .computeCommandEncoder()
                 .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
             unsafe {
                 encoder.setComputePipelineState(&self.extrema_pipeline);
-                encoder.setTexture_atIndex(Some(dogs[i].raw()),     0);
+                encoder.setTexture_atIndex(Some(dogs[i].raw()), 0);
                 encoder.setTexture_atIndex(Some(dogs[i + 1].raw()), 1);
                 encoder.setTexture_atIndex(Some(dogs[i + 2].raw()), 2);
                 encoder.setBuffer_offset_atIndex(Some(kp_buf.metal_buffer()), 0, 0);
                 encoder.setBuffer_offset_atIndex(Some(count_buf.metal_buffer()), 0, 1);
                 encoder.setBytes_length_atIndex(
-                    NonNull::new_unchecked(&extrema_params as *const DoGExtremaParams as *mut c_void),
+                    NonNull::new_unchecked(
+                        &extrema_params as *const DoGExtremaParams as *mut c_void,
+                    ),
                     mem::size_of::<DoGExtremaParams>(),
                     2,
                 );
 
-                let tew    = self.extrema_pipeline.threadExecutionWidth();
+                let tew = self.extrema_pipeline.threadExecutionWidth();
                 let max_tg = self.extrema_pipeline.maxTotalThreadsPerThreadgroup();
-                let tg_h   = (max_tg / tew).max(1);
-                let grid    = MTLSize { width: w as usize, height: h as usize, depth: 1 };
-                let tg_size = MTLSize { width: tew,        height: tg_h,       depth: 1 };
+                let tg_h = (max_tg / tew).max(1);
+                let grid = MTLSize {
+                    width: w as usize,
+                    height: h as usize,
+                    depth: 1,
+                };
+                let tg_size = MTLSize {
+                    width: tew,
+                    height: tg_h,
+                    depth: 1,
+                };
                 encoder.dispatchThreads_threadsPerThreadgroup(grid, tg_size);
             }
 
@@ -171,9 +198,13 @@ impl DoGDetector {
         w: u32,
         h: u32,
     ) -> Result<()> {
-        let params = DoGParams { width: w, height: h };
+        let params = DoGParams {
+            width: w,
+            height: h,
+        };
 
-        let encoder = cmd_buf.computeCommandEncoder()
+        let encoder = cmd_buf
+            .computeCommandEncoder()
             .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         unsafe {
@@ -187,11 +218,19 @@ impl DoGDetector {
                 0,
             );
 
-            let tew    = self.subtract_pipeline.threadExecutionWidth();
+            let tew = self.subtract_pipeline.threadExecutionWidth();
             let max_tg = self.subtract_pipeline.maxTotalThreadsPerThreadgroup();
-            let tg_h   = (max_tg / tew).max(1);
-            let grid    = MTLSize { width: w as usize, height: h as usize, depth: 1 };
-            let tg_size = MTLSize { width: tew,        height: tg_h,       depth: 1 };
+            let tg_h = (max_tg / tew).max(1);
+            let grid = MTLSize {
+                width: w as usize,
+                height: h as usize,
+                depth: 1,
+            };
+            let tg_size = MTLSize {
+                width: tew,
+                height: tg_h,
+                depth: 1,
+            };
             encoder.dispatchThreads_threadsPerThreadgroup(grid, tg_size);
         }
 
@@ -201,18 +240,24 @@ impl DoGDetector {
 
     fn subtract(
         &self,
-        ctx:    &Context,
+        ctx: &Context,
         blur_a: &Texture,
         blur_b: &Texture,
         output: &Texture,
         w: u32,
         h: u32,
     ) -> Result<()> {
-        let params = DoGParams { width: w, height: h };
+        let params = DoGParams {
+            width: w,
+            height: h,
+        };
 
-        let cmd_buf = ctx.queue().commandBuffer()
+        let cmd_buf = ctx
+            .queue()
+            .commandBuffer()
             .ok_or(Error::Gpu("failed to create command buffer".into()))?;
-        let encoder = cmd_buf.computeCommandEncoder()
+        let encoder = cmd_buf
+            .computeCommandEncoder()
             .ok_or(Error::Gpu("failed to create compute encoder".into()))?;
 
         unsafe {
@@ -226,11 +271,19 @@ impl DoGDetector {
                 0,
             );
 
-            let tew    = self.subtract_pipeline.threadExecutionWidth();
+            let tew = self.subtract_pipeline.threadExecutionWidth();
             let max_tg = self.subtract_pipeline.maxTotalThreadsPerThreadgroup();
-            let tg_h   = (max_tg / tew).max(1);
-            let grid    = MTLSize { width: w as usize, height: h as usize, depth: 1 };
-            let tg_size = MTLSize { width: tew,        height: tg_h,       depth: 1 };
+            let tg_h = (max_tg / tew).max(1);
+            let grid = MTLSize {
+                width: w as usize,
+                height: h as usize,
+                depth: 1,
+            };
+            let tg_size = MTLSize {
+                width: tew,
+                height: tg_h,
+                depth: 1,
+            };
             encoder.dispatchThreads_threadsPerThreadgroup(grid, tg_size);
         }
 
