@@ -27,3 +27,4 @@
 - [Pipeline & Performance](performance.md)
 - [Examples Walkthrough](examples.md)
 - [Adding a Kernel](adding-a-kernel.md)
+- [Design Document](design.md)
