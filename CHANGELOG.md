@@ -1,7 +1,7 @@
 # Changelog
 
 
-## [0.3.0] - 2026-03-30
+## [0.3.0] - March 2026
 
 ### Added
 
@@ -57,7 +57,7 @@
 
 ---
 
-## [0.2.0] - 2025-12-01
+## [0.2.0] - March 2026
 
 ### Added
 - Published to crates.io as `vx-gpu` and `vx-vision`
@@ -72,7 +72,7 @@
 
 ---
 
-## [0.1.0] - 2025-10-01
+## [0.1.0] - February 2026
 
 ### Added
 - Initial release
